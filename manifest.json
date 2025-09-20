@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Highperformr Sales Nav Import",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Extract contacts and companies from LinkedIn Sales Navigator and sync with Highperformr.ai",
   "icons": {
     "16": "icon.png",
