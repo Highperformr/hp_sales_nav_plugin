@@ -1,0 +1,41 @@
+{
+  "name": "linkedin-sales-navigator-integration",
+  "version": "1.0.0",
+  "description": "Chrome extension for LinkedIn Sales Navigator integration with Highperformr.ai",
+  "main": "background.js",
+  "scripts": {
+    "build": "npm run clean && npm run lint && npm run copy-files && npm run zip",
+    "clean": "rm -rf dist/ && rm -f *.zip",
+    "copy-files": "mkdir -p dist && cp manifest.json content.js content.css background.js popup.html popup.js README.md dist/ && echo 'Files copied to dist/'",
+    "zip": "cd dist && zip -r ../linkedin-sales-nav-integration.zip .",
+    "dev": "npm run lint && npm run copy-files && echo 'Extension built for development. Load the dist/ folder in Chrome.'",
+    "watch": "npm run dev && echo 'Watching for changes... Press Ctrl+C to stop' && chokidar '*.js' '*.css' '*.html' '*.json' -c 'npm run lint && npm run copy-files && echo \"Files updated at $(date)\"'",
+    "lint": "echo '🔍 Linting JavaScript files...' && eslint *.js --format=stylish --color",
+    "lint:fix": "echo '🔧 Fixing JavaScript files...' && eslint *.js --fix --format=stylish --color",
+    "test": "echo 'No tests configured yet'",
+    "package": "npm run build && echo 'Extension packaged as linkedin-sales-nav-integration.zip'",
+    "load-dev": "npm run dev && echo 'Load the dist/ folder in Chrome extensions page'"
+  },
+  "keywords": [
+    "chrome-extension",
+    "linkedin",
+    "sales-navigator",
+    "highperformr",
+    "crm",
+    "integration"
+  ],
+  "author": "Highperformr.ai",
+  "license": "MIT",
+  "devDependencies": {
+    "chokidar-cli": "^3.0.0",
+    "eslint": "^8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/highperformr/linkedin-sales-navigator-integration.git"
+  },
+  "bugs": {
+    "url": "https://github.com/highperformr/linkedin-sales-navigator-integration/issues"
+  },
+  "homepage": "https://github.com/highperformr/linkedin-sales-navigator-integration#readme"
+}

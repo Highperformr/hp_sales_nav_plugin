@@ -1,0 +1,1044 @@
+// LinkedIn Sales Navigator Integration Content Script
+console.log('[HP Extension] Content script loaded on:', window.location.href);
+
+class LinkedInSalesNavIntegration {
+  constructor() {
+    console.log('[HP Extension] LinkedInSalesNavIntegration constructor called');
+    this.allowedPaths = {
+      salesNavigatorPeople: 'https://www.linkedin.com/sales/search/people',
+      salesNavigatorCompany: 'https://www.linkedin.com/sales/search/company'
+    };
+    this.init();
+  }
+
+  init() {
+    console.log('[HP Extension] Initializing LinkedIn Sales Navigator Integration');
+    const urlCheck = this.isAllowedUrl();
+    console.log('[HP Extension] URL check result:', urlCheck);
+    
+    if (urlCheck.allowed) {
+      console.log('[HP Extension] URL is allowed, injecting UI and setting up event listeners');
+      this.injectUI();
+      this.setupEventListeners();
+    } else {
+      console.log('[HP Extension] URL is not allowed, skipping initialization');
+    }
+  }
+
+  isAllowedUrl() {
+    const url = window.location.href;
+    console.log('[HP Extension] Checking URL:', url);
+    
+    // Check for Sales Navigator people search
+    if (url.includes('/sales/search/people') && url.includes('query=')) {
+      console.log('[HP Extension] Detected Sales Navigator people search');
+      return { allowed: true, type: 'salesNavigatorPeople' };
+    }
+    
+    // Check for Sales Navigator company search
+    if (url.includes('/sales/search/company') && url.includes('query=')) {
+      console.log('[HP Extension] Detected Sales Navigator company search');
+      return { allowed: true, type: 'salesNavigatorCompany' };
+    }
+    
+    console.log('[HP Extension] URL does not match allowed patterns');
+    return { allowed: false };
+  }
+
+  injectUI() {
+    console.log('[HP Extension] Setting up UI injection observer');
+    
+    // Try to inject immediately first
+    this.tryInjectUI();
+    
+    // Wait for search results to load
+    const observer = new MutationObserver(() => {
+      const searchResults = document.querySelector('[data-test-search-results]') || 
+                           document.querySelector('.search-results-container') ||
+                           document.querySelector('.search-results') ||
+                           document.querySelector('.search-results-container') ||
+                           document.querySelector('[data-test-id="search-results"]') ||
+                           document.querySelector('.artdeco-entity-lockup') ||
+                           document.querySelector('.reusable-search__result-container');
+      
+      console.log('[HP Extension] MutationObserver triggered, checking for search results:', !!searchResults);
+      console.log('[HP Extension] Existing integration container:', !!document.getElementById('hp-integration-container'));
+      
+      if (searchResults && !document.getElementById('hp-integration-container')) {
+        console.log('[HP Extension] Creating integration UI');
+        this.createIntegrationUI();
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    // Also try to inject after a delay
+    setTimeout(() => {
+      this.tryInjectUI();
+    }, 2000);
+
+    // Final fallback - inject after 5 seconds regardless
+    setTimeout(() => {
+      if (!document.getElementById('hp-integration-container')) {
+        console.log('[HP Extension] Final fallback - injecting UI at top of page');
+        this.createIntegrationUI();
+      }
+    }, 5000);
+  }
+
+  tryInjectUI() {
+    console.log('[HP Extension] Trying to inject UI');
+    if (!document.getElementById('hp-integration-container')) {
+      // Try multiple possible locations for the button
+      const possibleContainers = [
+        document.querySelector('.search-results-container'),
+        document.querySelector('[data-test-search-results]'),
+        document.querySelector('.search-results'),
+        document.querySelector('.scaffold-layout__content'),
+        document.querySelector('.search-results-container'),
+        document.querySelector('.artdeco-entity-lockup')?.parentElement,
+        document.querySelector('.reusable-search__result-container')?.parentElement
+      ].filter(Boolean);
+
+      console.log('[HP Extension] Found possible containers:', possibleContainers.length);
+      
+      if (possibleContainers.length > 0) {
+        console.log('[HP Extension] Creating integration UI with first available container');
+        this.createIntegrationUI(possibleContainers[0]);
+      } else {
+        console.log('[HP Extension] No suitable container found, will retry with observer');
+      }
+    }
+  }
+
+  createIntegrationUI(targetContainer = null) {
+    console.log('[HP Extension] Creating integration UI elements');
+    const container = document.createElement('div');
+    container.id = 'hp-integration-container';
+    container.className = 'hp-integration-container';
+    
+    const button = document.createElement('button');
+    button.id = 'hp-integration-button';
+    button.className = 'hp-integration-btn';
+    button.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+      </svg>
+      Add to Highperformr
+    `;
+    
+    container.appendChild(button);
+    console.log('[HP Extension] Integration button created');
+    
+    // Try to find a good insertion point
+    let insertionPoint = targetContainer;
+    
+    if (!insertionPoint) {
+      // Try multiple possible locations
+      insertionPoint = document.querySelector('[data-test-search-results]') ||
+                     document.querySelector('.search-results-container') ||
+                     document.querySelector('.search-results') ||
+                     document.querySelector('.scaffold-layout__content') ||
+                     document.querySelector('.artdeco-entity-lockup')?.parentElement ||
+                     document.querySelector('.reusable-search__result-container')?.parentElement;
+    }
+    
+    console.log('[HP Extension] Insertion point found:', !!insertionPoint);
+    
+    if (insertionPoint) {
+      // Try to insert at the beginning of the container
+      if (insertionPoint.firstChild) {
+        insertionPoint.insertBefore(container, insertionPoint.firstChild);
+      } else {
+        insertionPoint.appendChild(container);
+      }
+      console.log('[HP Extension] Integration UI inserted into page');
+    } else {
+      // Fallback: insert at the top of the body
+      console.log('[HP Extension] No suitable container found, inserting at top of body');
+      document.body.insertBefore(container, document.body.firstChild);
+    }
+  }
+
+  setupEventListeners() {
+    console.log('[HP Extension] Setting up event listeners');
+    document.addEventListener('click', (event) => {
+      console.log('[HP Extension] Click event detected on:', event.target.id);
+      if (event.target.id === 'hp-integration-button') {
+        console.log('[HP Extension] Integration button clicked');
+        this.handleIntegrationClick();
+      }
+    });
+  }
+
+  async handleIntegrationClick() {
+    console.log('[HP Extension] Handling integration click');
+    try {
+      // Check authentication
+      console.log('[HP Extension] Checking authentication...');
+      const isAuth = await this.checkAuthentication();
+      console.log('[HP Extension] Authentication result:', isAuth);
+      
+      if (!isAuth) {
+        console.log('[HP Extension] Not authenticated, showing auth modal');
+        this.showAuthModal();
+        return;
+      }
+
+      // Show workspace/segment selection modal
+      console.log('[HP Extension] Authenticated, showing workspace modal');
+      this.showWorkspaceModal();
+    } catch (error) {
+      console.error('[HP Extension] Error handling integration click:', error);
+      this.showError('An error occurred. Please try again.');
+    }
+  }
+
+  async checkAuthentication() {
+    console.log('[HP Extension] Starting authentication check');
+    try {
+      const result = await chrome.storage.local.get(['isAuthenticated', 'userId', 'accountId']);
+      console.log('[HP Extension] Local storage result:', result);
+      
+      // Check if already authenticated in storage
+      if (result.isAuthenticated && result.userId && result.accountId) {
+        console.log('[HP Extension] Already authenticated in local storage');
+        return true;
+      }
+      
+      // Check if user is logged in on the platform by trying to access it
+      console.log('[HP Extension] Checking platform session...');
+      try {
+        const response = await fetch('https://app.highperformr.ai/api/users/session', {
+          method: 'GET'
+        });
+        
+        console.log('[HP Extension] Platform session check response status:', response.status);
+        console.log('[HP Extension] Platform session check response content-type:', response.headers.get('content-type'));
+        
+        if (response.ok) {
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const userData = await response.json();
+            console.log('[HP Extension] Platform session found, user data:', userData);
+            // Store the session data
+            await chrome.storage.local.set({
+              isAuthenticated: true,
+              userId: userData.id,
+              accountId: userData.accountId,
+              workspaces: userData.workspaces
+            });
+            console.log('[HP Extension] Platform session data stored');
+            return true;
+          } else {
+            console.log('[HP Extension] Response is not JSON, checking if we have valid cookies');
+            // If we get HTML response, it might mean we're redirected to login page
+            // But we have cookies, so let's try to use them
+            return false;
+          }
+        }
+      } catch (error) {
+        // Platform not accessible or user not logged in
+        console.log('[HP Extension] Platform session not found:', error.message);
+      }
+      
+      console.log('[HP Extension] No authentication found');
+      return false;
+    } catch (error) {
+      console.error('[HP Extension] Error checking authentication:', error);
+      return false;
+    }
+  }
+
+  showAuthModal() {
+    console.log('[HP Extension] Showing authentication modal');
+    const modal = document.createElement('div');
+    modal.className = 'hp-modal-overlay';
+    modal.innerHTML = `
+      <div class="hp-modal">
+        <div class="hp-modal-header">
+          <h3>Authentication Required</h3>
+          <button class="hp-modal-close">&times;</button>
+        </div>
+        <div class="hp-modal-body">
+          <p>Please authenticate with Highperformr.ai to continue.</p>
+        </div>
+        <div class="hp-modal-footer">
+          <button class="hp-btn-secondary" id="hp-cancel-auth">Cancel</button>
+          <button class="hp-btn-primary" id="hp-authenticate">Authenticate</button>
+        </div>
+      </div>
+    `;
+
+    // Setup event listeners
+    modal.querySelector('.hp-modal-close').onclick = () => {
+      console.log('[HP Extension] Auth modal closed');
+      this.closeModal(modal);
+    };
+    modal.querySelector('#hp-cancel-auth').onclick = () => {
+      console.log('[HP Extension] Auth modal cancelled');
+      this.closeModal(modal);
+    };
+    modal.querySelector('#hp-authenticate').onclick = () => {
+      console.log('[HP Extension] Auth modal authenticate clicked');
+      this.closeModal(modal);
+      this.authenticate();
+    };
+
+    document.body.appendChild(modal);
+    console.log('[HP Extension] Authentication modal added to page');
+  }
+
+  async authenticate() {
+    console.log('[HP Extension] Starting authentication process');
+    try {
+      // Open authentication popup
+      const authUrl = 'https://auth.highperformr.ai/auth/chrome-extension';
+      console.log('[HP Extension] Opening auth popup to:', authUrl);
+      
+      const authWindow = window.open(
+        authUrl,
+        'highperformr_auth',
+        'width=500,height=600,scrollbars=yes,resizable=yes'
+      );
+
+      if (!authWindow) {
+        console.error('[HP Extension] Failed to open auth popup - popups blocked?');
+        this.showError('Please allow popups for authentication.');
+        return;
+      }
+
+      console.log('[HP Extension] Auth popup opened, starting polling');
+      let pollCount = 0;
+      const maxPolls = 60; // 30 seconds max (500ms * 60)
+      
+      // Poll for authentication completion with shorter interval
+      const checkAuth = setInterval(async () => {
+        pollCount++;
+        console.log('[HP Extension] Poll attempt:', pollCount, '/', maxPolls);
+        try {
+          if (authWindow.closed) {
+            console.log('[HP Extension] Auth popup closed');
+            clearInterval(checkAuth);
+            return;
+          }
+
+          // Check current URL
+          const url = authWindow.location.href;
+          console.log('[HP Extension] Auth popup URL:', url);
+          
+          // Check if redirected to success page
+          if (url.includes('/auth/success')) {
+            console.log('[HP Extension] Auth success detected');
+            clearInterval(checkAuth);
+            
+            // Capture cookies from the auth window before closing
+            await this.captureCookiesFromWindow(authWindow);
+            
+            authWindow.close();
+            this.handleAuthSuccess();
+          }
+          // Check if redirected to main app (already logged in)
+          else if (url.includes('app.highperformr.ai') && !url.includes('/auth/') && !url.includes('chrome-extension')) {
+            console.log('[HP Extension] Already logged in - detected app.highperformr.ai');
+            clearInterval(checkAuth);
+            
+            // Capture cookies from the auth window before closing
+            await this.captureCookiesFromWindow(authWindow);
+            
+            authWindow.close();
+            this.handleAlreadyLoggedIn();
+          }
+          // Also check for any highperformr.ai domain (in case of redirects)
+          else if (url.includes('highperformr.ai') && !url.includes('/auth/') && !url.includes('chrome-extension')) {
+            console.log('[HP Extension] Detected highperformr.ai domain, treating as logged in');
+            clearInterval(checkAuth);
+            
+            // Capture cookies from the auth window before closing
+            await this.captureCookiesFromWindow(authWindow);
+            
+            authWindow.close();
+            this.handleAlreadyLoggedIn();
+          }
+          // Check if we're on the main app page (any path after app.highperformr.ai)
+          else if (url.includes('app.highperformr.ai/') && url !== 'https://app.highperformr.ai/' && !url.includes('/auth/')) {
+            console.log('[HP Extension] Detected main app page, treating as logged in');
+            clearInterval(checkAuth);
+            
+            // Capture cookies from the auth window before closing
+            await this.captureCookiesFromWindow(authWindow);
+            
+            authWindow.close();
+            this.handleAlreadyLoggedIn();
+          }
+        } catch (error) {
+          // Cross-origin error - expected during auth flow
+          console.log('[HP Extension] Cross-origin error (expected):', error.message);
+          // If we get cross-origin errors, it might mean we're on a different domain
+          // Try to detect if we're on highperformr.ai by checking the error
+          if (error.message.includes('cross-origin') || error.message.includes('SecurityError')) {
+            console.log('[HP Extension] Cross-origin error suggests we might be on highperformr.ai domain');
+            // After a few cross-origin errors, assume we're logged in
+            if (pollCount > 10) {
+              console.log('[HP Extension] Multiple cross-origin errors, assuming logged in');
+              clearInterval(checkAuth);
+              
+              // Try to capture cookies from the auth window before closing
+              await this.captureCookiesFromWindow(authWindow);
+              
+              authWindow.close();
+              this.handleAlreadyLoggedIn();
+              return;
+            }
+          }
+        }
+        
+        // Timeout after max polls
+        if (pollCount >= maxPolls) {
+          console.log('[HP Extension] Auth polling timeout, closing popup');
+          clearInterval(checkAuth);
+          authWindow.close();
+          this.showError('Authentication timeout. Please try again.');
+        }
+      }, 500); // Reduced to 500ms for faster response
+
+    } catch (error) {
+      console.error('[HP Extension] Authentication error:', error);
+      this.showError('Authentication failed. Please try again.');
+    }
+  }
+
+  async captureCookiesFromWindow() {
+    console.log('[HP Extension] Attempting to capture cookies from auth window');
+    
+    try {
+      // Since we can't access the auth window's location due to cross-origin restrictions,
+      // we'll capture cookies from the Highperformr domain directly
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'CAPTURE_COOKIES_FROM_DOMAIN',
+          domain: '.highperformr.ai'
+        }, (response) => {
+          console.log('[HP Extension] Cookie capture response:', response);
+          resolve(response);
+        });
+      });
+
+      if (response && response.success) {
+        console.log('[HP Extension] Successfully captured cookies from Highperformr domain');
+        
+        // Store the captured cookies in local storage
+        await chrome.storage.local.set({
+          highperformrCookies: response.cookies,
+          cookieCaptureTime: Date.now()
+        });
+        
+        console.log('[HP Extension] Cookies stored in local storage');
+      } else {
+        console.log('[HP Extension] Failed to capture cookies from Highperformr domain');
+      }
+    } catch (error) {
+      console.error('[HP Extension] Error capturing cookies from auth window:', error);
+    }
+  }
+
+  async handleAuthSuccess() {
+    console.log('[HP Extension] Handling auth success');
+    try {
+      // Get cookies first
+      const cookies = await this.getHighperformrCookies();
+      console.log('[HP Extension] Retrieved cookies for auth success:', cookies.length);
+      
+      // Verify authentication with backend using cookies
+      const response = await fetch('https://app.highperformr.ai/api/users/session', {
+        method: 'GET',
+        headers: {
+          'Cookie': cookies
+        }
+      });
+
+      console.log('[HP Extension] Auth success verification response status:', response.status);
+
+      if (response.ok) {
+        const contentType = response.headers.get('content-type');
+        console.log('[HP Extension] Auth success response content-type:', contentType);
+        
+        if (contentType && contentType.includes('application/json')) {
+          const userData = await response.json();
+          console.log('[HP Extension] Auth success user data:', userData);
+          
+          await chrome.storage.local.set({
+            isAuthenticated: true,
+            userId: userData.data?.id || userData.id,
+            accountId: userData.data?.attributes?.accounts?.[0]?.id || userData.accountId,
+            workspaces: userData.data?.attributes?.accounts || userData.workspaces,
+            highperformrCookies: cookies
+          });
+          
+          this.showSuccess('Authentication successful!');
+          // Show workspace modal after successful auth
+          setTimeout(() => {
+            this.showWorkspaceModal();
+          }, 1000);
+        } else {
+          console.log('[HP Extension] Auth success response is not JSON, but we have cookies and 200 status');
+          // Even if we don't get JSON, if we have cookies and got 200, assume we're logged in
+          // Try to get account ID from workspaces
+          let accountId = 'unknown';
+          try {
+            const workspaces = await this.fetchWorkspacesFromBackground();
+            if (workspaces && workspaces.length > 0) {
+              accountId = workspaces[0].id;
+              console.log('[HP Extension] Using first workspace as accountId:', accountId);
+            }
+          } catch (error) {
+            console.error('[HP Extension] Failed to fetch workspaces for accountId:', error);
+          }
+          
+          await chrome.storage.local.set({
+            isAuthenticated: true,
+            userId: 'unknown',
+            accountId: accountId,
+            highperformrCookies: cookies
+          });
+          
+          this.showSuccess('Authentication successful!');
+          setTimeout(() => {
+            this.showWorkspaceModal();
+          }, 1000);
+        }
+      } else {
+        throw new Error('Authentication verification failed');
+      }
+    } catch (error) {
+      console.error('[HP Extension] Auth verification error:', error);
+      this.showError('Authentication verification failed. Please try again.');
+    }
+  }
+
+  async handleAlreadyLoggedIn() {
+    console.log('[HP Extension] Handling already logged in scenario');
+    try {
+      // Get cookies from Highperformr domain
+      const cookies = await this.getHighperformrCookies();
+      console.log('[HP Extension] Retrieved Highperformr cookies:', cookies.length);
+      console.log('[HP Extension] Cookies text:', cookies);
+      
+      // Verify authentication with backend using the cookies
+      const response = await fetch('https://app.highperformr.ai/api/users/session', {
+        method: 'GET',
+        headers: {
+          'Cookie': cookies
+        }
+      });
+
+      console.log('[HP Extension] Auth verify response status:', response.status);
+
+      if (response.ok) {
+        const contentType = response.headers.get('content-type');
+        console.log('[HP Extension] Auth verify response content-type:', contentType);
+        
+        if (contentType && contentType.includes('application/json')) {
+          const userData = await response.json();
+          console.log('[HP Extension] User data retrieved:', userData);
+          
+          await chrome.storage.local.set({
+            isAuthenticated: true,
+            userId: userData.data?.id || userData.id,
+            accountId: userData.data?.attributes?.accounts?.[0]?.id || userData.accountId,
+            workspaces: userData.data?.attributes?.accounts || userData.workspaces,
+            highperformrCookies: cookies
+          });
+        } else {
+          console.log('[HP Extension] Response is not JSON, but we have cookies and 200 status - assuming logged in');
+          // Even if we don't get JSON, if we have cookies and got 200, assume we're logged in
+          // Try to get account ID from workspaces
+          let accountId = 'unknown';
+          try {
+            const workspaces = await this.fetchWorkspacesFromBackground();
+            if (workspaces && workspaces.length > 0) {
+              accountId = workspaces[0].id;
+              console.log('[HP Extension] Using first workspace as accountId:', accountId);
+            }
+          } catch (error) {
+            console.error('[HP Extension] Failed to fetch workspaces for accountId:', error);
+          }
+          
+          await chrome.storage.local.set({
+            isAuthenticated: true,
+            userId: 'unknown',
+            accountId: accountId,
+            highperformrCookies: cookies
+          });
+        }
+        
+        this.showSuccess('Already logged in! Using existing session.');
+        // Show workspace modal after successful auth
+        setTimeout(() => {
+          this.showWorkspaceModal();
+        }, 1000);
+      } else {
+        throw new Error('Authentication verification failed');
+      }
+    } catch (error) {
+      console.error('[HP Extension] Already logged in verification error:', error);
+      this.showError('Failed to verify existing session. Please try again.');
+    }
+  }
+
+  async getHighperformrCookies() {
+    console.log('[HP Extension] Getting Highperformr cookies');
+    try {
+      // First, try to get stored cookies from auth window capture
+      const stored = await chrome.storage.local.get(['highperformrCookies', 'cookieCaptureTime']);
+      if (stored.highperformrCookies && stored.cookieCaptureTime) {
+        const timeSinceCapture = Date.now() - stored.cookieCaptureTime;
+        // Use stored cookies if they're less than 1 hour old
+        if (timeSinceCapture < 3600000) {
+          console.log('[HP Extension] Using stored cookies from auth window capture');
+          return stored.highperformrCookies;
+        } else {
+          console.log('[HP Extension] Stored cookies are too old, refreshing...');
+        }
+      }
+
+      // Fallback to getting cookies from extension context
+      if (typeof chrome !== 'undefined' && chrome.cookies) {
+        const cookies = await chrome.cookies.getAll({
+          domain: '.highperformr.ai'
+        });
+        
+        console.log('[HP Extension] Found cookies:', cookies.length);
+        const cookieString = cookies
+          .map(cookie => `${cookie.name}=${cookie.value}`)
+          .join('; ');
+        
+        console.log('[HP Extension] Cookie string length:', cookieString.length);
+        return cookieString;
+      } else {
+        console.log('[HP Extension] chrome.cookies not available, requesting from background script');
+        // Request cookies from background script
+        return new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            type: 'GET_HIGHPERFORMR_COOKIES'
+          }, (response) => {
+            console.log('[HP Extension] Received cookies from background:', response?.cookies?.length || 0);
+            resolve(response?.cookies || '');
+          });
+        });
+      }
+    } catch (error) {
+      console.error('[HP Extension] Error getting Highperformr cookies:', error);
+      return '';
+    }
+  }
+
+  async getStoredCookies() {
+    console.log('[HP Extension] Getting stored cookies');
+    try {
+      const result = await chrome.storage.local.get(['highperformrCookies']);
+      const cookies = result.highperformrCookies || '';
+      console.log('[HP Extension] Stored cookies length:', cookies.length);
+      return cookies;
+    } catch (error) {
+      console.error('[HP Extension] Error getting stored cookies:', error);
+      return '';
+    }
+  }
+
+  async fetchWorkspacesFromBackground() {
+    console.log('[HP Extension] Fetching workspaces from background script');
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'FETCH_WORKSPACES'
+        }, (response) => {
+          console.log('[HP Extension] Received workspaces response from background:', response);
+          resolve(response);
+        });
+      });
+
+      if (response && response.success) {
+        console.log('[HP Extension] Successfully fetched workspaces:', response.workspaces.length);
+        return response.workspaces;
+      } else {
+        console.error('[HP Extension] Failed to fetch workspaces:', response?.error);
+        throw new Error(response?.error || 'Failed to fetch workspaces');
+      }
+    } catch (error) {
+      console.error('[HP Extension] Error fetching workspaces from background:', error);
+      throw error;
+    }
+  }
+
+  async fetchSegmentsFromBackground(workspaceId) {
+    console.log('[HP Extension] Fetching segments from background script for workspace:', workspaceId);
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'FETCH_SEGMENTS',
+          workspaceId: workspaceId
+        }, (response) => {
+          console.log('[HP Extension] Received segments response from background:', response);
+          resolve(response);
+        });
+      });
+
+      if (response && response.success) {
+        console.log('[HP Extension] Successfully fetched segments:', response.segments.length);
+        return response.segments;
+      } else {
+        console.error('[HP Extension] Failed to fetch segments:', response?.error);
+        throw new Error(response?.error || 'Failed to fetch segments');
+      }
+    } catch (error) {
+      console.error('[HP Extension] Error fetching segments from background:', error);
+      throw error;
+    }
+  }
+
+  async showWorkspaceModal() {
+    try {
+      const userData = await chrome.storage.local.get(['workspaces', 'accountId']);
+      console.log('[HP Extension] Retrieved user data for workspace modal:', userData);
+      
+      let workspaces = [];
+      
+      // First try to get workspaces from stored session data
+      if (userData.workspaces && Array.isArray(userData.workspaces)) {
+        console.log('[HP Extension] Using workspaces from session data:', userData.workspaces.length);
+        workspaces = userData.workspaces;
+      } else {
+        console.log('[HP Extension] Fetching workspaces from background script');
+        workspaces = await this.fetchWorkspacesFromBackground();
+      }
+
+      if (workspaces.length === 0) {
+        this.showError('No workspaces found. Please check your account.');
+        return;
+      }
+
+      // Create modal with workspaces (segments will be fetched when workspace is selected)
+      const modal = this.createWorkspaceModal(workspaces);
+      document.body.appendChild(modal);
+    } catch (error) {
+      console.error('[HP Extension] Error showing workspace modal:', error);
+      this.showError('Failed to load workspace information. Please try again.');
+    }
+  }
+
+  createWorkspaceModal(workspaces) {
+    const modal = document.createElement('div');
+    modal.className = 'hp-modal-overlay';
+    modal.innerHTML = `
+      <div class="hp-modal">
+        <div class="hp-modal-header">
+          <h3>Select Workspace & Segment</h3>
+          <button class="hp-modal-close">&times;</button>
+        </div>
+        <div class="hp-modal-body">
+          <div class="hp-form-group">
+            <label>Workspace:</label>
+            <div class="hp-searchable-select">
+              <input type="text" id="hp-workspace-search" placeholder="Search workspaces..." />
+              <select id="hp-workspace-select" size="5">
+                ${workspaces.map(ws => 
+    `<option value="${ws.id}">${ws.name}</option>`
+  ).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="hp-form-group">
+            <label>Segment:</label>
+            <div class="hp-searchable-select">
+              <input type="text" id="hp-segment-search" placeholder="Select a workspace first..." disabled />
+              <select id="hp-segment-select" size="5" disabled>
+                <option value="">Select a workspace to load segments</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="hp-modal-footer">
+          <button class="hp-btn-secondary" id="hp-cancel">Cancel</button>
+          <button class="hp-btn-primary" id="hp-import" disabled>Import</button>
+        </div>
+      </div>
+    `;
+
+    this.setupWorkspaceModalEvents(modal, workspaces);
+    return modal;
+  }
+
+  setupWorkspaceModalEvents(modal, workspaces) {
+    // Close modal
+    modal.querySelector('.hp-modal-close').onclick = () => this.closeModal(modal);
+    modal.querySelector('#hp-cancel').onclick = () => this.closeModal(modal);
+
+    // Get references to elements
+    const workspaceSearch = modal.querySelector('#hp-workspace-search');
+    const workspaceSelect = modal.querySelector('#hp-workspace-select');
+    const segmentSearch = modal.querySelector('#hp-segment-search');
+    const segmentSelect = modal.querySelector('#hp-segment-select');
+    const importButton = modal.querySelector('#hp-import');
+
+    // Workspace search functionality
+    workspaceSearch.addEventListener('input', (e) => {
+      const searchTerm = e.target.value.toLowerCase();
+      const filteredWorkspaces = workspaces.filter(ws => 
+        ws.name.toLowerCase().includes(searchTerm)
+      );
+      
+      workspaceSelect.innerHTML = filteredWorkspaces.map(ws => 
+        `<option value="${ws.id}">${ws.name}</option>`
+      ).join('');
+    });
+
+    // Workspace selection - fetch segments when workspace changes
+    workspaceSelect.addEventListener('change', async (e) => {
+      const workspaceId = e.target.value;
+      console.log('[HP Extension] Workspace selected:', workspaceId);
+      
+      if (workspaceId) {
+        // Show loading state
+        segmentSearch.placeholder = 'Loading segments...';
+        segmentSelect.innerHTML = '<option value="">Loading segments...</option>';
+        segmentSelect.disabled = true;
+        segmentSearch.disabled = true;
+        importButton.disabled = true;
+        
+        try {
+          const segments = await this.fetchSegmentsFromBackground(workspaceId);
+          console.log('[HP Extension] Fetched segments for workspace:', segments.length);
+          
+          if (segments.length > 0) {
+            segmentSelect.innerHTML = segments.map(seg => 
+              `<option value="${seg.id}">${seg.name}</option>`
+            ).join('');
+            segmentSearch.placeholder = 'Search segments...';
+            segmentSelect.disabled = false;
+            segmentSearch.disabled = false;
+          } else {
+            segmentSelect.innerHTML = '<option value="">No segments found</option>';
+            segmentSearch.placeholder = 'No segments available';
+          }
+        } catch (error) {
+          console.error('[HP Extension] Error fetching segments:', error);
+          segmentSelect.innerHTML = '<option value="">Error loading segments</option>';
+          segmentSearch.placeholder = 'Error loading segments';
+        }
+      } else {
+        // Reset segment dropdown
+        segmentSelect.innerHTML = '<option value="">Select a workspace to load segments</option>';
+        segmentSelect.disabled = true;
+        segmentSearch.disabled = true;
+        segmentSearch.placeholder = 'Select a workspace first...';
+        importButton.disabled = true;
+      }
+    });
+
+    // Segment search functionality
+    let currentSegments = [];
+    segmentSearch.addEventListener('input', (e) => {
+      const searchTerm = e.target.value.toLowerCase();
+      const filteredSegments = currentSegments.filter(seg => 
+        seg.name.toLowerCase().includes(searchTerm)
+      );
+      
+      segmentSelect.innerHTML = filteredSegments.map(seg => 
+        `<option value="${seg.id}">${seg.name}</option>`
+      ).join('');
+    });
+
+    // Store current segments when they're loaded
+    const originalFetchSegmentsFromBackground = this.fetchSegmentsFromBackground.bind(this);
+    this.fetchSegmentsFromBackground = async (workspaceId) => {
+      const segments = await originalFetchSegmentsFromBackground(workspaceId);
+      currentSegments = segments;
+      return segments;
+    };
+
+    // Import button
+    importButton.onclick = () => {
+      const workspaceId = workspaceSelect.value;
+      const segmentId = segmentSelect.value;
+
+      if (!workspaceId || !segmentId) {
+        this.showError('Please select both workspace and segment');
+        return;
+      }
+
+      this.closeModal(modal);
+      this.startDataImport(workspaceId, segmentId);
+    };
+
+    // Enable import button when both workspace and segment are selected
+    segmentSelect.addEventListener('change', () => {
+      const workspaceId = workspaceSelect.value;
+      const segmentId = segmentSelect.value;
+      importButton.disabled = !workspaceId || !segmentId;
+    });
+  }
+
+
+  async startDataImport(workspaceId, segmentId) {
+    try {
+      const urlInfo = this.isAllowedUrl();
+      const currentUrl = window.location.href;
+      
+      // Show progress modal
+      this.showProgressModal();
+      
+      // Send message to background script
+      chrome.runtime.sendMessage({
+        type: 'START_SALES_NAV_IMPORT',
+        url: currentUrl,
+        searchType: urlInfo.type,
+        workspace: workspaceId,
+        segment: segmentId
+      });
+    } catch (error) {
+      console.error('Error starting data import:', error);
+      this.showError('Failed to start data import. Please try again.');
+    }
+  }
+
+  showProgressModal() {
+    const modal = document.createElement('div');
+    modal.id = 'hp-progress-modal';
+    modal.className = 'hp-modal-overlay';
+    modal.innerHTML = `
+      <div class="hp-modal">
+        <div class="hp-modal-header">
+          <h3>Importing Data</h3>
+        </div>
+        <div class="hp-modal-body">
+          <div class="hp-progress-container">
+            <div class="hp-progress-bar">
+              <div class="hp-progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="hp-progress-text">Starting import...</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Listen for progress updates from background script
+    chrome.runtime.onConnect.addListener((port) => {
+      if (port.name === 'salesNavImport') {
+        port.onMessage.addListener((message) => {
+          this.handleProgressUpdate(message);
+        });
+      }
+    });
+  }
+
+  handleProgressUpdate(message) {
+    const modal = document.getElementById('hp-progress-modal');
+    if (!modal) {return;}
+
+    const progressFill = modal.querySelector('.hp-progress-fill');
+    const progressText = modal.querySelector('.hp-progress-text');
+
+    switch (message.type) {
+    case 'PROGRESS_UPDATE':
+      progressFill.style.width = `${message.progress}%`;
+      progressText.textContent = message.status;
+      break;
+    case 'COMPLETE':
+      progressText.textContent = 'Import completed successfully!';
+      progressText.style.color = '#27ae60';
+      setTimeout(() => {
+        this.closeModal(modal);
+      }, 2000);
+      break;
+    case 'ERROR':
+      progressText.textContent = `Error: ${message.error}`;
+      progressText.style.color = '#e74c3c';
+      break;
+    }
+  }
+
+  closeModal(modal) {
+    if (modal && modal.parentNode) {
+      modal.parentNode.removeChild(modal);
+    }
+  }
+
+  showError(message) {
+    const toast = document.createElement('div');
+    toast.className = 'hp-toast hp-toast-error';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add('hp-toast-show');
+    }, 100);
+
+    setTimeout(() => {
+      toast.classList.remove('hp-toast-show');
+      setTimeout(() => {
+        if (toast.parentNode) {
+          document.body.removeChild(toast);
+        }
+      }, 300);
+    }, 5000);
+  }
+
+  showSuccess(message) {
+    const toast = document.createElement('div');
+    toast.className = 'hp-toast hp-toast-success';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+      toast.classList.add('hp-toast-show');
+    }, 100);
+
+    setTimeout(() => {
+      toast.classList.remove('hp-toast-show');
+      setTimeout(() => {
+        if (toast.parentNode) {
+          document.body.removeChild(toast);
+        }
+      }, 300);
+    }, 3000);
+  }
+}
+
+// Add a visible indicator that the extension is loaded
+const indicator = document.createElement('div');
+indicator.style.cssText = `
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  background: #16a085;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 10000;
+  font-family: Arial, sans-serif;
+`;
+indicator.textContent = 'HP Extension Loaded';
+document.body.appendChild(indicator);
+
+// Remove indicator after 3 seconds
+setTimeout(() => {
+  if (indicator.parentNode) {
+    indicator.parentNode.removeChild(indicator);
+  }
+}, 3000);
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    new LinkedInSalesNavIntegration();
+  });
+} else {
+  new LinkedInSalesNavIntegration();
+}

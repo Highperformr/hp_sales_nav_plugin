@@ -1,0 +1,833 @@
+// Background Service Worker for LinkedIn Sales Navigator Integration
+console.log('[HP Extension Background] Background script loaded');
+
+class BackgroundService {
+  constructor() {
+    console.log('[HP Extension Background] BackgroundService constructor called');
+    this.setupMessageHandlers();
+    this.globalCookieData = null;
+    this.rateLimiter = new RateLimiter(30, 60000); // 30 requests per minute (allowing for 2-second delays)
+  }
+
+  setupMessageHandlers() {
+    console.log('[HP Extension Background] Setting up message handlers');
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      console.log('[HP Extension Background] Received message:', message.type, message);
+      switch (message.type) {
+      case 'START_SALES_NAV_IMPORT':
+        console.log('[HP Extension Background] Handling sales nav import');
+        this.handleSalesNavImport(message, sender);
+        break;
+      case 'AUTHENTICATE':
+        console.log('[HP Extension Background] Handling authentication');
+        this.handleAuthentication(message, sender, sendResponse);
+        break;
+      case 'LOGOUT':
+        console.log('[HP Extension Background] Handling logout');
+        this.handleLogout();
+        break;
+      case 'GET_HIGHPERFORMR_COOKIES':
+        console.log('[HP Extension Background] Getting Highperformr cookies');
+        this.getHighperformrCookies(sendResponse);
+        return true; // Keep message channel open for async response
+
+      case 'CAPTURE_COOKIES_FROM_WINDOW':
+        console.log('[HP Extension Background] Capturing cookies from window:', message.windowUrl);
+        this.captureCookiesFromWindow(message.windowUrl, sendResponse);
+        return true; // Keep message channel open for async response
+
+      case 'CAPTURE_COOKIES_FROM_DOMAIN':
+        console.log('[HP Extension Background] Capturing cookies from domain:', message.domain);
+        this.captureCookiesFromDomain(message.domain, sendResponse);
+        return true; // Keep message channel open for async response
+      case 'FETCH_WORKSPACES':
+        console.log('[HP Extension Background] Fetching workspaces');
+        this.fetchWorkspaces(sendResponse);
+        return true; // Keep message channel open for async response
+      case 'FETCH_SEGMENTS':
+        console.log('[HP Extension Background] Fetching segments for workspace:', message.workspaceId);
+        this.fetchSegments(message.workspaceId, sendResponse);
+        return true; // Keep message channel open for async response
+      default:
+        console.log('[HP Extension Background] Unknown message type:', message.type);
+      }
+    });
+  }
+
+  async handleSalesNavImport(message, sender) {
+    console.log('[HP Extension Background] Starting sales nav import:', message);
+    try {
+      // Get LinkedIn cookies
+      console.log('[HP Extension Background] Getting LinkedIn cookies...');
+      await this.getLinkedInCookies();
+      
+      // Create port for progress updates
+      const port = chrome.tabs.connect(sender.tab.id, { name: 'salesNavImport' });
+      console.log('[HP Extension Background] Connected to tab for progress updates');
+      
+      // Start data fetching
+      console.log('[HP Extension Background] Starting data fetching...');
+      const data = await this.fetchSalesNavData(
+        message.url, 
+        message.searchType, 
+        port
+      );
+      
+      console.log('[HP Extension Background] Data fetching completed, records found:', data.length);
+      
+      if (data.length === 0) {
+        console.log('[HP Extension Background] No data found to import');
+        port.postMessage({ 
+          type: 'ERROR', 
+          error: 'No data found to import' 
+        });
+        return;
+      }
+
+      // Send to Highperformr API
+      console.log('[HP Extension Background] Sending data to Highperformr API...');
+      await this.sendToHighperformr(data, message.workspace, message.segment, port);
+      
+      console.log('[HP Extension Background] Import completed successfully');
+      port.postMessage({ 
+        type: 'COMPLETE',
+        message: `Successfully imported ${data.length} records`
+      });
+    } catch (error) {
+      console.error('[HP Extension Background] Import failed:', error);
+      const port = chrome.tabs.connect(sender.tab.id, { name: 'salesNavImport' });
+      port.postMessage({ 
+        type: 'ERROR', 
+        error: error.message 
+      });
+    }
+  }
+
+  async getLinkedInCookies() {
+    try {
+      const cookies = await chrome.cookies.getAll({
+        domain: '.linkedin.com'
+      });
+      
+      this.globalCookieData = cookies
+        .map(cookie => `${cookie.name}=${cookie.value}`)
+        .join('; ');
+    } catch (error) {
+      console.error('Error getting LinkedIn cookies:', error);
+      throw new Error('Failed to access LinkedIn cookies. Please ensure you are logged into LinkedIn.');
+    }
+  }
+
+  async fetchSalesNavData(searchUrl, searchType, port) {
+    const isCompanySearch = searchType.includes('Company');
+    let page = 1;
+    let allData = [];
+    let hasMore = true;
+    const maxPages = isCompanySearch ? 10 : 20; // Allow up to 20 pages for people search (2,000 contacts max with 100 per page)
+
+    port.postMessage({ 
+      type: 'PROGRESS_UPDATE', 
+      progress: 10, 
+      status: 'Starting data collection...' 
+    });
+
+    while (hasMore && page <= maxPages) {
+      try {
+        // Rate limiting
+        await this.rateLimiter.canMakeRequest();
+
+        const apiUrl = isCompanySearch 
+          ? this.createCompanySalesNaviApiUrl(searchUrl, page)
+          : this.createSalesNaviApiUrl(searchUrl, page);
+
+        if (!apiUrl) {
+          console.error('Failed to create API URL for page:', page);
+          break;
+        }
+        
+        console.log(`[HP Extension Background] Generated API URL for page ${page}:`, apiUrl);
+
+        const response = await this.fetchLinkedInAPI(apiUrl);
+        console.log(`[HP Extension Background] LinkedIn API response for page ${page}:`, {
+          totalElements: response.elements?.length || 0,
+          paging: response.paging,
+          url: apiUrl
+        });
+        
+        const processedData = isCompanySearch 
+          ? this.processCompanyData(response)
+          : this.processPeopleData(response);
+          
+        console.log(`[HP Extension Background] Processed data for page ${page}:`, {
+          transformedCount: processedData.transformedData.length,
+          totalRecords: processedData.totalRecords
+        });
+
+        allData = allData.concat(processedData.transformedData);
+
+        // Update progress
+        const progress = Math.min(50 + (page * 2), 80);
+        port.postMessage({ 
+          type: 'PROGRESS_UPDATE', 
+          progress, 
+          status: `Collected ${allData.length} records...` 
+        });
+
+        // Check if we have more data
+        const currentBatchSize = processedData.transformedData.length;
+        const maxContacts = isCompanySearch ? 1000 : 2000;
+        hasMore = currentBatchSize === 100 && allData.length < maxContacts;
+        
+        console.log(`[HP Extension Background] Page ${page}: Got ${currentBatchSize} contacts, Total: ${allData.length}, HasMore: ${hasMore}, MaxContacts: ${maxContacts}`);
+        
+        if (currentBatchSize < 100) {
+          console.log(`[HP Extension Background] Stopping because batch size (${currentBatchSize}) is less than 100`);
+        }
+        if (allData.length >= maxContacts) {
+          console.log(`[HP Extension Background] Stopping because reached max contacts (${maxContacts})`);
+        }
+        
+        page++;
+
+        // Small delay to be respectful to LinkedIn's servers (2 seconds as per documented flow)
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+      } catch (error) {
+        console.error('Error fetching page:', page, error);
+        if (error.message.includes('429')) {
+          // Rate limited - wait longer
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
+        }
+        break;
+      }
+    }
+
+    return allData;
+  }
+
+  async fetchLinkedInAPI(url) {
+    const csrfToken = this.extractCSRFToken();
+    
+    const response = await fetch(url, {
+      headers: {
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.9',
+        'csrf-token': csrfToken,
+        'x-li-lang': 'en_US',
+        'x-restli-protocol-version': '2.0.0',
+        'x-li-identity': 'dXJuOmxpOmVudGVycHJpc2VQcm9maWxlOih1cm46bGk6ZW50ZXJwcmlzZUFjY291bnQ6MzQzNjA1MjM0LDM1NDc2NTQ5NCk',
+        'cookie': this.globalCookieData,
+        'Referer': 'https://www.linkedin.com/sales/',
+        'Referrer-Policy': 'strict-origin-when-cross-origin'
+      },
+      method: 'GET'
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('LinkedIn authentication expired. Please refresh the page and try again.');
+      } else if (response.status === 403) {
+        throw new Error('Access denied. Please ensure you have Sales Navigator access.');
+      } else if (response.status === 429) {
+        throw new Error('Rate limited. Please wait a moment and try again.');
+      }
+      throw new Error(`LinkedIn API error: ${response.status}`);
+    }
+
+    return await response.json();
+  }
+
+  createSalesNaviApiUrl(salesUrl, page = 1) {
+    try {
+      const url = new URL(salesUrl);
+      const params = new URLSearchParams(url.search);
+      const start = (page - 1) * 100;
+      
+      const recentSearchId = params.get('recentSearchId');
+      const savedSearchId = params.get('savedSearchId');
+      const sessionId = params.get('sessionId');
+      const queryParam = params.get('query');
+
+      const decoration = 'com.linkedin.sales.deco.desktop.searchv2.LeadSearchResult-14';
+
+      if (recentSearchId) {
+        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=recentSearchId&start=${start}&count=100&recentSearchId=${recentSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+      } else if (savedSearchId) {
+        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=savedSearchId&start=${start}&count=100&savedSearchId=${savedSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+      } else if (queryParam) {
+        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=searchQuery&query=${queryParam}&start=${start}&count=100&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error creating Sales Navigator API URL:', error);
+      return null;
+    }
+  }
+
+  createCompanySalesNaviApiUrl(salesUrl, page = 1) {
+    try {
+      const url = new URL(salesUrl);
+      const params = new URLSearchParams(url.search);
+      const start = (page - 1) * 100;
+      
+      const savedSearchId = params.get('savedSearchId');
+      const sessionId = params.get('sessionId');
+      const queryParam = params.get('query');
+
+      const decoration = 'com.linkedin.sales.deco.desktop.searchv2.AccountSearchResult-4';
+
+      if (savedSearchId) {
+        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=savedSearchId&start=${start}&count=100&savedSearchId=${savedSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+      } else if (queryParam) {
+        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=searchQuery&query=${queryParam}&start=${start}&count=100&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error creating Company Sales Navigator API URL:', error);
+      return null;
+    }
+  }
+
+  processPeopleData(data) {
+    try {
+      if (!data.elements || !Array.isArray(data.elements)) {
+        return { transformedData: [], totalRecords: 0 };
+      }
+
+      const transformedData = data.elements.map(element => {
+        try {
+          const vanityName = element.entityUrn?.split('(')[1]?.split(',')[0];
+          const profileURL = vanityName ? `https://www.linkedin.com/in/${vanityName}` : '';
+          
+          return {
+            'Linkedin': profileURL,
+            'FullName': element.fullName || '',
+            'FirstName': element.firstName || '',
+            'LastName': element.lastName || '',
+            'CompanyName': element.currentPositions?.[0]?.companyName || '',
+            'JobTitle': element.currentPositions?.[0]?.title || '',
+            'Location': element.geoRegion || ''
+          };
+        } catch (error) {
+          console.error('Error processing person data:', error);
+          return null;
+        }
+      }).filter(Boolean);
+
+      return { 
+        transformedData, 
+        totalRecords: data.paging?.total || transformedData.length 
+      };
+    } catch (error) {
+      console.error('Error processing people data:', error);
+      return { transformedData: [], totalRecords: 0 };
+    }
+  }
+
+  processCompanyData(data) {
+    try {
+      if (!data.elements || !Array.isArray(data.elements)) {
+        return { transformedData: [], totalRecords: 0 };
+      }
+
+      const transformedData = data.elements.map(element => {
+        try {
+          return {
+            'CompanyName': element.name || '',
+            'Industry': element.industry || '',
+            'Location': element.location || '',
+            'CompanySize': element.companySize || '',
+            'Website': element.website || ''
+          };
+        } catch (error) {
+          console.error('Error processing company data:', error);
+          return null;
+        }
+      }).filter(Boolean);
+
+      return { 
+        transformedData, 
+        totalRecords: data.paging?.total || transformedData.length 
+      };
+    } catch (error) {
+      console.error('Error processing company data:', error);
+      return { transformedData: [], totalRecords: 0 };
+    }
+  }
+
+  extractCSRFToken() {
+    try {
+      const match = this.globalCookieData?.match(/JSESSIONID="([^"]+)"/)?.[1];
+      return match || null;
+    } catch (error) {
+      console.error('Error extracting CSRF token:', error);
+      return null;
+    }
+  }
+
+  async sendToHighperformr(data, workspaceId, segmentId, port) {
+    try {
+      port.postMessage({ 
+        type: 'PROGRESS_UPDATE', 
+        progress: 85, 
+        status: 'Sending data to Highperformr.ai...' 
+      });
+
+      // Get user data
+      const userData = await chrome.storage.local.get(['accountId']);
+      let accountId = userData.accountId;
+      
+      // If accountId is not found or is 'unknown', use the workspaceId as fallback
+      if (!accountId || accountId === 'unknown') {
+        console.log('[HP Extension Background] AccountId not found or unknown, using workspaceId as fallback:', workspaceId);
+        accountId = workspaceId;
+      }
+      
+      console.log('[HP Extension Background] Using accountId for API calls:', accountId);
+
+      const api = new HighperformrAPI();
+      
+      // Create source data exactly as shown in network logs
+      const sourceData = [{
+        sourceType: 'importFromWebhook',
+        sourceMeta: {
+          text: `SN-${new Date().toISOString().replace(/[:.]/g, '-')} - people search`,
+          config: {
+            fieldMapping: [
+              { hpFieldName: 'contact.linkedIn', sourceFieldName: 'Linkedin' },
+              { sourceFieldName: 'FullName', hpFieldName: 'contact.fullName' },
+              { sourceFieldName: 'FirstName', hpFieldName: 'contact.firstName' },
+              { sourceFieldName: 'LastName', hpFieldName: 'contact.lastName' },
+              { sourceFieldName: 'JobTitle', hpFieldName: 'contact.title' },
+              { sourceFieldName: 'Country', hpFieldName: 'contact.country' },
+              { sourceFieldName: 'State', hpFieldName: 'contact.state' },
+              { sourceFieldName: 'City', hpFieldName: 'contact.city' },
+              { sourceFieldName: 'contactRecord', hpFieldName: 'contact.contactRecord' }
+            ]
+          }
+        }
+      }];
+
+      port.postMessage({ 
+        type: 'PROGRESS_UPDATE', 
+        progress: 85, 
+        status: 'Creating source...' 
+      });
+
+      // Step 1: Create source using exact API from network logs
+      console.log('🔨 createSource API call:');
+      console.log('  - URL:', `${api.baseURL}/api/sources/bulk-upsert?accountId=${accountId}`);
+      console.log('  - Request body:', { sources: sourceData });
+      
+      const sourceResponse = await api.createSource(accountId, sourceData);
+      
+      console.log('🔨 createSource response status:', sourceResponse.status);
+      console.log('✅ createSource response data:', sourceResponse.data);
+      
+      port.postMessage({ 
+        type: 'PROGRESS_UPDATE', 
+        progress: 90, 
+        status: 'Adding contacts to source...' 
+      });
+
+      // Get the source ID from the response (exact structure from logs)
+      const sourceId = sourceResponse.data?.[0]?.id;
+      
+      if (!sourceId) {
+        throw new Error('Failed to get source ID from response');
+      }
+
+      console.log('🆔 Extracted sourceId:', sourceId);
+
+      // Step 2: Add contacts using exact API from network logs
+      console.log('📞 AddContactsToSource API call:');
+      console.log('  - URL:', `${api.baseURL}/api/contacts/${sourceId}/bulk-upsert-contacts?accountId=${accountId}`);
+      console.log('  - Request body:', { contactsData: data });
+      
+      const contactsResponse = await api.addContactsToSource(accountId, sourceId, data);
+      
+      console.log('📞 AddContactsToSource response status:', contactsResponse.status);
+      console.log('✅ AddContactsToSource response data:', contactsResponse.data);
+
+      port.postMessage({ 
+        type: 'PROGRESS_UPDATE', 
+        progress: 100, 
+        status: 'Import completed successfully!' 
+      });
+
+    } catch (error) {
+      console.error('Error sending to Highperformr:', error);
+      throw new Error(`Failed to send data to Highperformr.ai: ${error.message}`);
+    }
+  }
+
+  handleLogout() {
+    chrome.storage.local.clear();
+  }
+
+  async getHighperformrCookies(sendResponse) {
+    try {
+      console.log('[HP Extension Background] Getting Highperformr cookies');
+      const cookies = await chrome.cookies.getAll({
+        domain: '.highperformr.ai'
+      });
+      
+      console.log('[HP Extension Background] Found cookies:', cookies.length);
+      const cookieString = cookies
+        .map(cookie => `${cookie.name}=${cookie.value}`)
+        .join('; ');
+      
+      console.log('[HP Extension Background] Cookie string length:', cookieString.length);
+      console.log('[HP Extension Background] Cookie string:', cookieString);
+      sendResponse({ cookies: cookieString });
+    } catch (error) {
+      console.error('[HP Extension Background] Error getting Highperformr cookies:', error);
+      sendResponse({ cookies: '' });
+    }
+  }
+
+  async captureCookiesFromWindow(windowUrl, sendResponse) {
+    try {
+      console.log('[HP Extension Background] Capturing cookies from window:', windowUrl);
+      
+      // Extract domain from URL
+      const url = new URL(windowUrl);
+      const domain = url.hostname;
+      
+      console.log('[HP Extension Background] Extracting cookies for domain:', domain);
+      
+      // Get all cookies for the domain
+      const cookies = await chrome.cookies.getAll({
+        domain: domain
+      });
+      
+      console.log('[HP Extension Background] Found cookies for domain:', cookies.length);
+      
+      // Also get cookies for parent domains (like .highperformr.ai)
+      const parentDomain = domain.startsWith('.') ? domain : `.${  domain.split('.').slice(-2).join('.')}`;
+      console.log('[HP Extension Background] Also checking parent domain:', parentDomain);
+      
+      const parentCookies = await chrome.cookies.getAll({
+        domain: parentDomain
+      });
+      
+      console.log('[HP Extension Background] Found parent domain cookies:', parentCookies.length);
+      
+      // Combine all cookies
+      const allCookies = [...cookies, ...parentCookies];
+      
+      // Remove duplicates based on cookie name
+      const uniqueCookies = allCookies.reduce((acc, cookie) => {
+        if (!acc.find(c => c.name === cookie.name && c.domain === cookie.domain)) {
+          acc.push(cookie);
+        }
+        return acc;
+      }, []);
+      
+      console.log('[HP Extension Background] Unique cookies after deduplication:', uniqueCookies.length);
+      
+      // Create cookie string
+      const cookieString = uniqueCookies
+        .map(cookie => `${cookie.name}=${cookie.value}`)
+        .join('; ');
+      
+      console.log('[HP Extension Background] Captured cookie string length:', cookieString.length);
+      console.log('[HP Extension Background] Captured cookies text:', cookieString);
+      
+      // Store cookies in extension storage
+      await chrome.storage.local.set({
+        highperformrCookies: cookieString,
+        cookieCaptureTime: Date.now()
+      });
+      
+      console.log('[HP Extension Background] Cookies stored in extension storage');
+      
+      sendResponse({ 
+        success: true, 
+        cookies: cookieString,
+        cookieCount: uniqueCookies.length
+      });
+    } catch (error) {
+      console.error('[HP Extension Background] Error capturing cookies from window:', error);
+      sendResponse({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+  }
+
+  async captureCookiesFromDomain(domain, sendResponse) {
+    try {
+      console.log('[HP Extension Background] Capturing cookies from domain:', domain);
+      
+      // Get all cookies for the domain
+      const cookies = await chrome.cookies.getAll({
+        domain: domain
+      });
+      
+      console.log('[HP Extension Background] Found cookies for domain:', cookies.length);
+      
+      // Create cookie string
+      const cookieString = cookies
+        .map(cookie => `${cookie.name}=${cookie.value}`)
+        .join('; ');
+      
+      console.log('[HP Extension Background] Captured cookie string length:', cookieString.length);
+      console.log('[HP Extension Background] Captured cookies text:', cookieString);
+      
+      // Store cookies in extension storage
+      await chrome.storage.local.set({
+        highperformrCookies: cookieString,
+        cookieCaptureTime: Date.now()
+      });
+      
+      console.log('[HP Extension Background] Cookies stored in extension storage');
+      
+      sendResponse({ 
+        success: true, 
+        cookies: cookieString,
+        cookieCount: cookies.length
+      });
+    } catch (error) {
+      console.error('[HP Extension Background] Error capturing cookies from domain:', error);
+      sendResponse({ 
+        success: false, 
+        error: error.message 
+      });
+    }
+  }
+
+  async fetchWorkspaces(sendResponse) {
+    try {
+      console.log('[HP Extension Background] Fetching workspaces');
+      const cookies = await this.getStoredCookies();
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      
+      if (cookies) {
+        headers['Cookie'] = cookies;
+      }
+
+      // Use the session API to get workspaces (accounts)
+      const response = await fetch('https://app.highperformr.ai/api/users/session', {
+        method: 'GET',
+        headers: headers
+      });
+
+      console.log('[HP Extension Background] Workspaces response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch workspaces: ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const userData = await response.json();
+        console.log('[HP Extension Background] Fetched user data for workspaces:', userData);
+        
+        // Extract workspaces from the session data
+        const workspaces = userData.data?.attributes?.accounts || [];
+        console.log('[HP Extension Background] Extracted workspaces:', workspaces.length);
+        
+        sendResponse({ 
+          success: true, 
+          workspaces: workspaces 
+        });
+      } else {
+        console.log('[HP Extension Background] Response is not JSON, returning empty workspaces');
+        sendResponse({ 
+          success: true, 
+          workspaces: [] 
+        });
+      }
+    } catch (error) {
+      console.error('[HP Extension Background] Error fetching workspaces:', error);
+      sendResponse({ 
+        success: false, 
+        error: error.message,
+        workspaces: []
+      });
+    }
+  }
+
+  async fetchSegments(workspaceId, sendResponse) {
+    try {
+      console.log('[HP Extension Background] Fetching segments for workspace:', workspaceId);
+      const cookies = await this.getStoredCookies();
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      
+      if (cookies) {
+        headers['Cookie'] = cookies;
+      }
+
+      // Use the segments API with the workspace ID as accountId
+      const response = await fetch(`https://app.highperformr.ai/api/segments/filter-segments?accountId=${workspaceId}`, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({ limit: 1000 })
+      });
+
+      console.log('[HP Extension Background] Segments response status:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch segments: ${response.status}`);
+      }
+
+      const segmentsData = await response.json();
+      console.log('[HP Extension Background] Segments response data:', segmentsData);
+      
+      // Extract segments from the response
+      const segments = segmentsData.data || [];
+      console.log('[HP Extension Background] Extracted segments:', segments.length);
+      
+      // Map the segments to the expected format
+      const mappedSegments = segments.map(segment => ({
+        id: segment.id,
+        name: segment.attributes?.name || segment.name || 'Unnamed Segment'
+      }));
+      
+      console.log('[HP Extension Background] Mapped segments:', mappedSegments.length);
+      
+      sendResponse({ 
+        success: true, 
+        segments: mappedSegments 
+      });
+    } catch (error) {
+      console.error('[HP Extension Background] Error fetching segments:', error);
+      sendResponse({ 
+        success: false, 
+        error: error.message,
+        segments: []
+      });
+    }
+  }
+
+  async getStoredCookies() {
+    console.log('[HP Extension Background] Getting stored cookies');
+    try {
+      const result = await chrome.storage.local.get(['highperformrCookies']);
+      const cookies = result.highperformrCookies || '';
+      console.log('[HP Extension Background] Stored cookies length:', cookies.length);
+      return cookies;
+    } catch (error) {
+      console.error('[HP Extension Background] Error getting stored cookies:', error);
+      return '';
+    }
+  }
+}
+
+// Rate Limiter Class
+class RateLimiter {
+  constructor(maxRequests = 10, timeWindow = 60000) {
+    this.maxRequests = maxRequests;
+    this.timeWindow = timeWindow;
+    this.requests = [];
+  }
+
+  async canMakeRequest() {
+    const now = Date.now();
+    this.requests = this.requests.filter(time => now - time < this.timeWindow);
+    
+    if (this.requests.length >= this.maxRequests) {
+      const oldestRequest = Math.min(...this.requests);
+      const waitTime = this.timeWindow - (now - oldestRequest);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      return this.canMakeRequest();
+    }
+
+    this.requests.push(now);
+    return true;
+  }
+}
+
+// Highperformr API Client
+class HighperformrAPI {
+  constructor() {
+    this.baseURL = 'https://app.highperformr.ai';
+  }
+
+  async createSource(accountId, sourceData) {
+    console.log('[HP Extension Background] Creating source with accountId:', accountId);
+    const cookies = await this.getStoredCookies();
+    const headers = { 'Content-Type': 'application/json' };
+    
+    if (cookies) {
+      headers['Cookie'] = cookies;
+    }
+
+    // Use the exact API endpoint from the network logs
+    const response = await fetch(`${this.baseURL}/api/sources/bulk-upsert?accountId=${accountId}`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ sources: sourceData })
+    });
+
+    console.log('[HP Extension Background] Create source response status:', response.status);
+
+    if (!response.ok) {
+      throw new Error(`Create source failed: ${response.status}`);
+    }
+
+    const responseData = await response.json();
+    
+    // Return both status and data for logging
+    return {
+      status: response.status,
+      data: responseData
+    };
+  }
+
+  async addContactsToSource(accountId, sourceId, contactsData) {
+    console.log('[HP Extension Background] Adding contacts to source:', sourceId);
+    const cookies = await this.getStoredCookies();
+    const headers = { 'Content-Type': 'application/json' };
+    
+    if (cookies) {
+      headers['Cookie'] = cookies;
+    }
+
+    // Use the exact API endpoint from the network logs
+    const response = await fetch(`${this.baseURL}/api/contacts/${sourceId}/bulk-upsert-contacts?accountId=${accountId}`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ contactsData })
+    });
+
+    console.log('[HP Extension Background] Add contacts response status:', response.status);
+
+    if (!response.ok) {
+      throw new Error(`Add contacts failed: ${response.status}`);
+    }
+
+    const responseData = await response.json();
+    
+    // Return both status and data for logging
+    return {
+      status: response.status,
+      data: responseData
+    };
+  }
+
+
+  async getStoredCookies() {
+    console.log('[HP Extension Background] Getting stored cookies');
+    try {
+      const result = await chrome.storage.local.get(['highperformrCookies']);
+      const cookies = result.highperformrCookies || '';
+      console.log('[HP Extension Background] Stored cookies length:', cookies.length);
+      return cookies;
+    } catch (error) {
+      console.error('[HP Extension Background] Error getting stored cookies:', error);
+      return '';
+    }
+  }
+}
+
+// Initialize background service
+new BackgroundService();
