@@ -434,7 +434,8 @@ class BackgroundService {
       });
 
       // Get the source ID from the response (exact structure from logs)
-      const sourceId = sourceResponse.data?.[0]?.id;
+      // Response structure: {data: {data: [{id: "...", attributes: {...}}]}}
+      const sourceId = sourceResponse.data?.data?.[0]?.id;
       
       if (!sourceId) {
         throw new Error('Failed to get source ID from response');
@@ -454,6 +455,16 @@ class BackgroundService {
 
       port.postMessage({ 
         type: 'PROGRESS_UPDATE', 
+        progress: 95, 
+        status: 'Updating segment configuration...' 
+      });
+
+      // Step 3: CRITICAL - Update segment to include new source
+      console.log('🔧 Updating segment to include new source...');
+      await this.updateSegmentWithSource(accountId, sourceId, segmentId);
+      
+      port.postMessage({ 
+        type: 'PROGRESS_UPDATE', 
         progress: 100, 
         status: 'Import completed successfully!' 
       });
@@ -461,6 +472,101 @@ class BackgroundService {
     } catch (error) {
       console.error('Error sending to Highperformr:', error);
       throw new Error(`Failed to send data to Highperformr.ai: ${error.message}`);
+    }
+  }
+
+  async updateSegmentWithSource(accountId, sourceId, segment) {
+    try {
+      // The segment parameter is already the segment ID string
+      const segmentId = segment;
+
+      if (!segmentId) {
+        throw new Error('Segment ID is required');
+      }
+
+      console.log('🔍 Updating segment with ID:', segmentId);
+      console.log('🔍 Adding source ID:', sourceId);
+
+      // Step 1: Get existing segment data
+      console.log('📋 Getting existing segment data...');
+      const getSegmentResponse = await fetch(`https://app.highperformr.ai/api/segments/${segmentId}?accountId=${accountId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include'
+      });
+
+      if (!getSegmentResponse.ok) {
+        throw new Error(`Failed to get segment data: ${getSegmentResponse.status}`);
+      }
+
+      const existingSegment = await getSegmentResponse.json();
+      console.log('📋 Existing segment data:', existingSegment);
+
+      const existingConditionValues = existingSegment.data?.attributes?.condition?.value || [];
+      const existingSegmentSources = existingSegment.data?.attributes?.segmentSources || [];
+
+      console.log('📋 Existing condition values:', existingConditionValues);
+      console.log('📋 Existing segment sources:', existingSegmentSources);
+
+      // Step 2: Merge source IDs (avoid duplicates)
+      const mergedConditionValues = [...new Set([...existingConditionValues, sourceId])];
+      const mergedSegmentSources = [...new Set([...existingSegmentSources, sourceId])];
+
+      console.log('🔄 Merged condition values:', mergedConditionValues);
+      console.log('🔄 Merged segment sources:', mergedSegmentSources);
+
+      // Step 3: PATCH segment with updated configuration
+      console.log('🔧 PATCHing segment with updated source list...');
+      const patchBody = {
+        condition: {
+          field: 'contact.source',
+          value: mergedConditionValues,
+          operator: 'IN LIKE'
+        },
+        segmentSources: mergedSegmentSources
+      };
+
+      console.log('🔧 PATCH request body:', patchBody);
+
+      const response = await fetch(`https://app.highperformr.ai/api/segments/${segmentId}?accountId=${accountId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify(patchBody)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to update segment: ${response.status}`);
+      }
+
+      const patchResult = await response.json();
+      console.log('✅ Segment PATCH completed successfully:', patchResult);
+
+      // Step 4: Verify the update
+      console.log('🔍 Verifying segment update...');
+      const verifyResponse = await fetch(`https://app.highperformr.ai/api/segments/${segmentId}?accountId=${accountId}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        credentials: 'include'
+      });
+
+      if (verifyResponse.ok) {
+        const segmentAfterPatch = await verifyResponse.json();
+        console.log('✅ Segment state AFTER PATCH:', segmentAfterPatch.data?.attributes?.segmentSources);
+        console.log('✅ Condition AFTER PATCH:', segmentAfterPatch.data?.attributes?.condition);
+      }
+
+      console.log('✅ Segment update completed - contacts now visible in segment');
+      
+    } catch (error) {
+      console.error('❌ Error updating segment with source:', error);
+      throw error;
     }
   }
 

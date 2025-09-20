@@ -1,12 +1,12 @@
 {
   "name": "linkedin-sales-navigator-integration",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Chrome extension for LinkedIn Sales Navigator integration with Highperformr.ai",
   "main": "background.js",
   "scripts": {
     "build": "npm run clean && npm run lint && npm run copy-files && npm run zip",
     "clean": "rm -rf dist/ && rm -f *.zip",
-    "copy-files": "mkdir -p dist && cp manifest.json content.js content.css background.js popup.html popup.js README.md dist/ && echo 'Files copied to dist/'",
+    "copy-files": "mkdir -p dist && cp manifest.json content.js content.css background.js popup.html popup.js icon.png dist/ && echo 'Files copied to dist/'",
     "zip": "cd dist && zip -r ../linkedin-sales-nav-integration.zip .",
     "dev": "npm run lint && npm run copy-files && echo 'Extension built for development. Load the dist/ folder in Chrome.'",
     "watch": "npm run dev && echo 'Watching for changes... Press Ctrl+C to stop' && chokidar '*.js' '*.css' '*.html' '*.json' -c 'npm run lint && npm run copy-files && echo \"Files updated at $(date)\"'",
