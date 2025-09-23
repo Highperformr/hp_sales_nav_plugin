@@ -26,32 +26,43 @@ class PopupManager {
         return;
       }
       
-      // Check if user is logged in on the platform by trying to access it
-      console.log('[HP Extension Popup] Checking platform session...');
+      // Check if user is logged in on the platform via background script
+      console.log('[HP Extension Popup] Checking platform session via background script...');
       try {
-        const response = await fetch('https://app.highperformr.ai/api/auth/verify', {
-          method: 'GET'
+        const sessionResult = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            type: 'VERIFY_SESSION'
+          }, (response) => {
+            console.log('[HP Extension Popup] Session verification response from background:', response);
+            resolve(response);
+          });
         });
         
-        console.log('[HP Extension Popup] Platform session check response status:', response.status);
-        
-        if (response.ok) {
-          const userData = await response.json();
-          console.log('[HP Extension Popup] Platform session found, user data:', userData);
-          // Store the session data
-          await chrome.storage.local.set({
-            isAuthenticated: true,
-            userId: userData.id,
-            accountId: userData.accountId,
-            workspaces: userData.workspaces
-          });
-          console.log('[HP Extension Popup] Platform session data stored');
-          this.showAuthenticatedState(userData);
+        if (sessionResult && sessionResult.success && sessionResult.authenticated) {
+          console.log('[HP Extension Popup] Platform session verified via background script');
+          
+          if (sessionResult.userData) {
+            console.log('[HP Extension Popup] Platform session found, user data:', sessionResult.userData);
+            // Store the session data
+            await chrome.storage.local.set({
+              isAuthenticated: true,
+              userId: sessionResult.userData.id,
+              accountId: sessionResult.userData.accountId,
+              workspaces: sessionResult.userData.workspaces
+            });
+            console.log('[HP Extension Popup] Platform session data stored');
+            this.showAuthenticatedState(sessionResult.userData);
+          } else {
+            // No user data but authenticated
+            this.showAuthenticatedState({ id: 'unknown', accountId: 'unknown' });
+          }
           return;
+        } else {
+          console.log('[HP Extension Popup] Session verification failed:', sessionResult?.error || 'Unknown error');
         }
       } catch (error) {
         // Platform not accessible or user not logged in
-        console.log('[HP Extension Popup] Platform session not found:', error.message);
+        console.log('[HP Extension Popup] Platform session verification error:', error.message);
       }
       
       console.log('[HP Extension Popup] No authentication found, showing unauthenticated state');

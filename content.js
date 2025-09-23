@@ -200,55 +200,106 @@ class LinkedInSalesNavIntegration {
   async checkAuthentication() {
     console.log('[HP Extension] Starting authentication check');
     try {
-      const result = await chrome.storage.local.get(['isAuthenticated', 'userId', 'accountId']);
-      console.log('[HP Extension] Local storage result:', result);
+      // First check if we have valid stored cookies
+      const storedData = await chrome.storage.local.get(['isAuthenticated', 'userId', 'accountId', 'highperformrCookies', 'cookieCaptureTime']);
+      console.log('[HP Extension] Local storage result:', {
+        isAuthenticated: storedData.isAuthenticated,
+        hasUserId: !!storedData.userId,
+        hasAccountId: !!storedData.accountId,
+        hasCookies: !!storedData.highperformrCookies,
+        cookieAge: storedData.cookieCaptureTime ? (Date.now() - storedData.cookieCaptureTime) / 1000 / 60 : 'unknown'
+      });
       
-      // Check if already authenticated in storage
-      if (result.isAuthenticated && result.userId && result.accountId) {
-        console.log('[HP Extension] Already authenticated in local storage');
-        return true;
-      }
+      // Check if we have recent cookies (less than 1 hour old)
+      const hasRecentCookies = storedData.highperformrCookies && 
+                               storedData.cookieCaptureTime && 
+                               (Date.now() - storedData.cookieCaptureTime) < 3600000; // 1 hour
       
-      // Check if user is logged in on the platform by trying to access it
-      console.log('[HP Extension] Checking platform session...');
-      try {
-        const response = await fetch('https://app.highperformr.ai/api/users/session', {
-          method: 'GET'
-        });
+      // If we have stored auth data AND recent cookies, try to verify the session
+      if (storedData.isAuthenticated && storedData.userId && storedData.accountId && hasRecentCookies) {
+        console.log('[HP Extension] Found stored auth data with recent cookies, verifying session...');
         
-        console.log('[HP Extension] Platform session check response status:', response.status);
-        console.log('[HP Extension] Platform session check response content-type:', response.headers.get('content-type'));
-        
-        if (response.ok) {
-          const contentType = response.headers.get('content-type');
-          if (contentType && contentType.includes('application/json')) {
-            const userData = await response.json();
-            console.log('[HP Extension] Platform session found, user data:', userData);
-            // Store the session data
-            await chrome.storage.local.set({
-              isAuthenticated: true,
-              userId: userData.id,
-              accountId: userData.accountId,
-              workspaces: userData.workspaces
-            });
-            console.log('[HP Extension] Platform session data stored');
+        try {
+          const sessionValid = await this.verifyStoredSession();
+          if (sessionValid) {
+            console.log('[HP Extension] Stored session is valid, using existing authentication');
             return true;
           } else {
-            console.log('[HP Extension] Response is not JSON, checking if we have valid cookies');
-            // If we get HTML response, it might mean we're redirected to login page
-            // But we have cookies, so let's try to use them
-            return false;
+            console.log('[HP Extension] Stored session is invalid, clearing stored data');
+            // Clear invalid stored data
+            await chrome.storage.local.remove(['isAuthenticated', 'userId', 'accountId']);
           }
+        } catch (error) {
+          console.log('[HP Extension] Error verifying stored session:', error.message);
+          // Clear potentially invalid stored data
+          await chrome.storage.local.remove(['isAuthenticated', 'userId', 'accountId']);
+        }
+      }
+      
+      // Check if user is logged in on the platform by trying to access it via background script
+      console.log('[HP Extension] Checking platform session via background script...');
+      try {
+        // Get cookies first to ensure we have them stored
+        const cookies = await this.getHighperformrCookies();
+        console.log('[HP Extension] Retrieved cookies for session check:', cookies.length);
+        
+        if (!cookies) {
+          console.log('[HP Extension] No cookies available, authentication required');
+          return false;
+        }
+        
+        // Use background script to verify session (avoids CORS issues)
+        const sessionResult = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            type: 'VERIFY_SESSION'
+          }, (response) => {
+            console.log('[HP Extension] Session verification response from background:', response);
+            resolve(response);
+          });
+        });
+        
+        if (sessionResult && sessionResult.success && sessionResult.authenticated) {
+          console.log('[HP Extension] Platform session verified via background script');
+          return true;
+        } else {
+          console.log('[HP Extension] Session verification failed:', sessionResult?.error || 'Unknown error');
+          return false;
         }
       } catch (error) {
         // Platform not accessible or user not logged in
-        console.log('[HP Extension] Platform session not found:', error.message);
+        console.log('[HP Extension] Platform session verification error:', error.message);
       }
       
       console.log('[HP Extension] No authentication found');
       return false;
     } catch (error) {
       console.error('[HP Extension] Error checking authentication:', error);
+      return false;
+    }
+  }
+
+  async verifyStoredSession() {
+    console.log('[HP Extension] Verifying stored session via background script');
+    try {
+      // Use background script to verify session (avoids CORS issues)
+      const sessionResult = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'VERIFY_SESSION'
+        }, (response) => {
+          console.log('[HP Extension] Stored session verification response from background:', response);
+          resolve(response);
+        });
+      });
+      
+      if (sessionResult && sessionResult.success && sessionResult.authenticated) {
+        console.log('[HP Extension] Stored session verification successful');
+        return true;
+      } else {
+        console.log('[HP Extension] Stored session verification failed:', sessionResult?.error || 'Unknown error');
+        return false;
+      }
+    } catch (error) {
+      console.error('[HP Extension] Stored session verification error:', error);
       return false;
     }
   }
@@ -335,8 +386,8 @@ class LinkedInSalesNavIntegration {
             console.log('[HP Extension] Auth success detected');
             clearInterval(checkAuth);
             
-            // Capture cookies from the auth window before closing
-            await this.captureCookiesFromWindow(authWindow);
+            // Wait for redirect to app.highperformr.ai and capture cookies from there
+            await this.waitForAppRedirectAndCaptureCookies(authWindow);
             
             authWindow.close();
             this.handleAuthSuccess();
@@ -346,8 +397,12 @@ class LinkedInSalesNavIntegration {
             console.log('[HP Extension] Already logged in - detected app.highperformr.ai');
             clearInterval(checkAuth);
             
-            // Capture cookies from the auth window before closing
-            await this.captureCookiesFromWindow(authWindow);
+            // Wait a moment for cookies to be set in app context, then capture
+            console.log('[HP Extension] Waiting for cookies to be set in app.highperformr.ai context...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Capture cookies from app.highperformr.ai context
+            await this.captureCookiesFromAppDomain();
             
             authWindow.close();
             this.handleAlreadyLoggedIn();
@@ -357,8 +412,8 @@ class LinkedInSalesNavIntegration {
             console.log('[HP Extension] Detected highperformr.ai domain, treating as logged in');
             clearInterval(checkAuth);
             
-            // Capture cookies from the auth window before closing
-            await this.captureCookiesFromWindow(authWindow);
+            // Wait for redirect to app.highperformr.ai and capture cookies from there
+            await this.waitForAppRedirectAndCaptureCookies(authWindow);
             
             authWindow.close();
             this.handleAlreadyLoggedIn();
@@ -368,8 +423,12 @@ class LinkedInSalesNavIntegration {
             console.log('[HP Extension] Detected main app page, treating as logged in');
             clearInterval(checkAuth);
             
-            // Capture cookies from the auth window before closing
-            await this.captureCookiesFromWindow(authWindow);
+            // Wait a moment for cookies to be set in app context, then capture
+            console.log('[HP Extension] Waiting for cookies to be set in app.highperformr.ai context...');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Capture cookies from app.highperformr.ai context
+            await this.captureCookiesFromAppDomain();
             
             authWindow.close();
             this.handleAlreadyLoggedIn();
@@ -386,10 +445,18 @@ class LinkedInSalesNavIntegration {
               console.log('[HP Extension] Multiple cross-origin errors, assuming logged in');
               clearInterval(checkAuth);
               
-              // Try to capture cookies from the auth window before closing
-              await this.captureCookiesFromWindow(authWindow);
+              // Wait for cookies to be set in app.highperformr.ai context
+              console.log('[HP Extension] Waiting 3 seconds for cookies to be set in app.highperformr.ai...');
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              
+              // Capture cookies from app.highperformr.ai context specifically
+              await this.captureCookiesFromAppDomain();
               
               authWindow.close();
+              
+              // Wait another second after closing the window before verifying
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
               this.handleAlreadyLoggedIn();
               return;
             }
@@ -411,24 +478,133 @@ class LinkedInSalesNavIntegration {
     }
   }
 
-  async captureCookiesFromWindow() {
-    console.log('[HP Extension] Attempting to capture cookies from auth window');
+  async waitForAppRedirectAndCaptureCookies(authWindow) {
+    console.log('[HP Extension] Waiting for redirect to app.highperformr.ai...');
     
     try {
-      // Since we can't access the auth window's location due to cross-origin restrictions,
-      // we'll capture cookies from the Highperformr domain directly
+      // Wait for potential redirect to app.highperformr.ai
+      let redirectWaitCount = 0;
+      const maxRedirectWait = 10; // Wait up to 5 seconds for redirect
+      
+      while (redirectWaitCount < maxRedirectWait) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        redirectWaitCount++;
+        
+        try {
+          const currentUrl = authWindow.location.href;
+          console.log('[HP Extension] Checking for app redirect, current URL:', currentUrl);
+          
+          if (currentUrl.includes('app.highperformr.ai')) {
+            console.log('[HP Extension] Redirected to app.highperformr.ai, waiting for cookies to be set...');
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for cookies to be set
+            break;
+          }
+        } catch (error) {
+          // Cross-origin error, continue waiting
+          console.log('[HP Extension] Cross-origin error while waiting for redirect (expected)');
+        }
+      }
+      
+      // Now capture cookies from app.highperformr.ai context
+      await this.captureCookiesFromAppDomain();
+      
+    } catch (error) {
+      console.error('[HP Extension] Error waiting for app redirect:', error);
+      // Fallback to regular cookie capture
+      await this.captureCookiesFromAppDomain();
+    }
+  }
+
+  async captureCookiesFromAppDomain() {
+    console.log('[HP Extension] Capturing cookies specifically from app.highperformr.ai context');
+    
+    try {
+      // Try capturing cookies multiple times with delays to ensure they're fully set
+      let attempts = 0;
+      const maxAttempts = 5;
+      let bestResponse = null;
+      
+      while (attempts < maxAttempts) {
+        attempts++;
+        console.log(`[HP Extension] App domain cookie capture attempt ${attempts}/${maxAttempts}`);
+        
+        // Wait between attempts
+        if (attempts > 1) {
+          const waitTime = attempts > 3 ? 2000 : 1500;
+          console.log(`[HP Extension] Waiting ${waitTime}ms before app domain attempt ${attempts}`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+        
+        const response = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            type: 'CAPTURE_COOKIES_FROM_DOMAIN',
+            domain: 'app.highperformr.ai' // Specifically target app domain
+          }, (response) => {
+            console.log(`[HP Extension] App domain cookie capture attempt ${attempts} response:`, response);
+            resolve(response);
+          });
+        });
+
+        if (response && response.success) {
+          bestResponse = response;
+          
+          // Check if we have the session cookie
+          if (response.cookies && response.cookies.includes('session=')) {
+            console.log('[HP Extension] Found session cookie from app.highperformr.ai, using this response');
+            break;
+          } else {
+            console.log(`[HP Extension] App domain attempt ${attempts} missing session cookie, will try again`);
+            console.log(`[HP Extension] App domain cookies captured: ${response.cookies?.substring(0, 200)}...`);
+          }
+        }
+      }
+
+      if (bestResponse && bestResponse.success) {
+        console.log('[HP Extension] Successfully captured cookies from app.highperformr.ai domain');
+        console.log('[HP Extension] Final app domain cookies:', bestResponse.cookies);
+        
+        // Store the captured cookies in local storage
+        await chrome.storage.local.set({
+          highperformrCookies: bestResponse.cookies,
+          cookieCaptureTime: Date.now()
+        });
+        
+        console.log('[HP Extension] App domain cookies stored in local storage');
+      } else {
+        console.log('[HP Extension] Failed to capture cookies from app.highperformr.ai domain after all attempts');
+        
+        // Fallback: try to capture from broader domain and active tab
+        console.log('[HP Extension] Falling back to broader domain cookie capture...');
+        await this.captureCookiesFromWindow();
+        
+        // Also try capturing from active tab if user has app.highperformr.ai open
+        console.log('[HP Extension] Also trying to capture from active tab...');
+        await this.captureCookiesFromActiveTab();
+      }
+    } catch (error) {
+      console.error('[HP Extension] Error capturing cookies from app domain:', error);
+      // Fallback to regular cookie capture
+      await this.captureCookiesFromWindow();
+    }
+  }
+
+  async captureCookiesFromWindow() {
+    console.log('[HP Extension] Attempting to capture cookies from broader domain');
+    
+    try {
       const response = await new Promise((resolve) => {
         chrome.runtime.sendMessage({
           type: 'CAPTURE_COOKIES_FROM_DOMAIN',
           domain: '.highperformr.ai'
         }, (response) => {
-          console.log('[HP Extension] Cookie capture response:', response);
+          console.log('[HP Extension] Broader domain cookie capture response:', response);
           resolve(response);
         });
       });
 
       if (response && response.success) {
-        console.log('[HP Extension] Successfully captured cookies from Highperformr domain');
+        console.log('[HP Extension] Successfully captured cookies from broader Highperformr domain');
+        console.log('[HP Extension] Broader domain cookies:', response.cookies);
         
         // Store the captured cookies in local storage
         await chrome.storage.local.set({
@@ -436,12 +612,52 @@ class LinkedInSalesNavIntegration {
           cookieCaptureTime: Date.now()
         });
         
-        console.log('[HP Extension] Cookies stored in local storage');
+        console.log('[HP Extension] Broader domain cookies stored in local storage');
       } else {
-        console.log('[HP Extension] Failed to capture cookies from Highperformr domain');
+        console.log('[HP Extension] Failed to capture cookies from broader Highperformr domain');
       }
     } catch (error) {
-      console.error('[HP Extension] Error capturing cookies from auth window:', error);
+      console.error('[HP Extension] Error capturing cookies from broader domain:', error);
+    }
+  }
+
+  async captureCookiesFromActiveTab() {
+    console.log('[HP Extension] Attempting to capture cookies from active tab');
+    
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'CAPTURE_COOKIES_FROM_ACTIVE_TAB'
+        }, (response) => {
+          console.log('[HP Extension] Active tab cookie capture response:', response);
+          resolve(response);
+        });
+      });
+
+      if (response && response.success) {
+        console.log('[HP Extension] Successfully captured cookies from active tab');
+        console.log('[HP Extension] Active tab cookies:', response.cookies);
+        console.log('[HP Extension] Active tab URL:', response.tabUrl);
+        
+        // Check if we got the session cookie from active tab
+        if (response.cookies && response.cookies.includes('session=')) {
+          console.log('[HP Extension] 🎯 FOUND SESSION COOKIE FROM ACTIVE TAB!');
+          
+          // Store the captured cookies in local storage
+          await chrome.storage.local.set({
+            highperformrCookies: response.cookies,
+            cookieCaptureTime: Date.now()
+          });
+          
+          console.log('[HP Extension] Active tab cookies with session stored in local storage');
+        } else {
+          console.log('[HP Extension] Active tab cookies do not contain session cookie');
+        }
+      } else {
+        console.log('[HP Extension] Failed to capture cookies from active tab:', response?.error);
+      }
+    } catch (error) {
+      console.error('[HP Extension] Error capturing cookies from active tab:', error);
     }
   }
 
@@ -452,40 +668,31 @@ class LinkedInSalesNavIntegration {
       const cookies = await this.getHighperformrCookies();
       console.log('[HP Extension] Retrieved cookies for auth success:', cookies.length);
       
-      // Verify authentication with backend using cookies
-      const response = await fetch('https://app.highperformr.ai/api/users/session', {
-        method: 'GET',
-        headers: {
-          'Cookie': cookies
-        }
+      // Verify authentication with backend using background script
+      const sessionResult = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'VERIFY_SESSION'
+        }, (response) => {
+          console.log('[HP Extension] Auth success verification response from background:', response);
+          resolve(response);
+        });
       });
 
-      console.log('[HP Extension] Auth success verification response status:', response.status);
-
-      if (response.ok) {
-        const contentType = response.headers.get('content-type');
-        console.log('[HP Extension] Auth success response content-type:', contentType);
+      if (sessionResult && sessionResult.success && sessionResult.authenticated) {
+        console.log('[HP Extension] Auth success verification successful');
         
-        if (contentType && contentType.includes('application/json')) {
-          const userData = await response.json();
-          console.log('[HP Extension] Auth success user data:', userData);
+        if (sessionResult.userData) {
+          console.log('[HP Extension] Auth success user data:', sessionResult.userData);
           
           await chrome.storage.local.set({
             isAuthenticated: true,
-            userId: userData.data?.id || userData.id,
-            accountId: userData.data?.attributes?.accounts?.[0]?.id || userData.accountId,
-            workspaces: userData.data?.attributes?.accounts || userData.workspaces,
+            userId: sessionResult.userData.data?.id || sessionResult.userData.id,
+            accountId: sessionResult.userData.data?.attributes?.accounts?.[0]?.id || sessionResult.userData.accountId,
+            workspaces: sessionResult.userData.data?.attributes?.accounts || sessionResult.userData.workspaces,
             highperformrCookies: cookies
           });
-          
-          this.showSuccess('Authentication successful!');
-          // Show workspace modal after successful auth
-          setTimeout(() => {
-            this.showWorkspaceModal();
-          }, 1000);
         } else {
-          console.log('[HP Extension] Auth success response is not JSON, but we have cookies and 200 status');
-          // Even if we don't get JSON, if we have cookies and got 200, assume we're logged in
+          console.log('[HP Extension] Auth success but no user data, using fallback');
           // Try to get account ID from workspaces
           let accountId = 'unknown';
           try {
@@ -504,12 +711,13 @@ class LinkedInSalesNavIntegration {
             accountId: accountId,
             highperformrCookies: cookies
           });
-          
-          this.showSuccess('Authentication successful!');
-          setTimeout(() => {
-            this.showWorkspaceModal();
-          }, 1000);
         }
+        
+        this.showSuccess('Authentication successful!');
+        // Show workspace modal after successful auth
+        setTimeout(() => {
+          this.showWorkspaceModal();
+        }, 1000);
       } else {
         throw new Error('Authentication verification failed');
       }
@@ -527,34 +735,31 @@ class LinkedInSalesNavIntegration {
       console.log('[HP Extension] Retrieved Highperformr cookies:', cookies.length);
       console.log('[HP Extension] Cookies text:', cookies);
       
-      // Verify authentication with backend using the cookies
-      const response = await fetch('https://app.highperformr.ai/api/users/session', {
-        method: 'GET',
-        headers: {
-          'Cookie': cookies
-        }
+      // Verify authentication with backend using background script
+      const sessionResult = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({
+          type: 'VERIFY_SESSION'
+        }, (response) => {
+          console.log('[HP Extension] Already logged in verification response from background:', response);
+          resolve(response);
+        });
       });
 
-      console.log('[HP Extension] Auth verify response status:', response.status);
-
-      if (response.ok) {
-        const contentType = response.headers.get('content-type');
-        console.log('[HP Extension] Auth verify response content-type:', contentType);
+      if (sessionResult && sessionResult.success && sessionResult.authenticated) {
+        console.log('[HP Extension] Already logged in verification successful');
         
-        if (contentType && contentType.includes('application/json')) {
-          const userData = await response.json();
-          console.log('[HP Extension] User data retrieved:', userData);
+        if (sessionResult.userData) {
+          console.log('[HP Extension] User data retrieved:', sessionResult.userData);
           
           await chrome.storage.local.set({
             isAuthenticated: true,
-            userId: userData.data?.id || userData.id,
-            accountId: userData.data?.attributes?.accounts?.[0]?.id || userData.accountId,
-            workspaces: userData.data?.attributes?.accounts || userData.workspaces,
+            userId: sessionResult.userData.data?.id || sessionResult.userData.id,
+            accountId: sessionResult.userData.data?.attributes?.accounts?.[0]?.id || sessionResult.userData.accountId,
+            workspaces: sessionResult.userData.data?.attributes?.accounts || sessionResult.userData.workspaces,
             highperformrCookies: cookies
           });
         } else {
-          console.log('[HP Extension] Response is not JSON, but we have cookies and 200 status - assuming logged in');
-          // Even if we don't get JSON, if we have cookies and got 200, assume we're logged in
+          console.log('[HP Extension] Already logged in but no user data, using fallback');
           // Try to get account ID from workspaces
           let accountId = 'unknown';
           try {

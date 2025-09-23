@@ -48,6 +48,14 @@ class BackgroundService {
         console.log('[HP Extension Background] Fetching segments for workspace:', message.workspaceId);
         this.fetchSegments(message.workspaceId, sendResponse);
         return true; // Keep message channel open for async response
+      case 'VERIFY_SESSION':
+        console.log('[HP Extension Background] Verifying session');
+        this.verifySession(sendResponse);
+        return true; // Keep message channel open for async response
+      case 'CAPTURE_COOKIES_FROM_ACTIVE_TAB':
+        console.log('[HP Extension Background] Capturing cookies from active tab');
+        this.captureCookiesFromActiveTab(sendResponse);
+        return true; // Keep message channel open for async response
       default:
         console.log('[HP Extension Background] Unknown message type:', message.type);
       }
@@ -123,7 +131,7 @@ class BackgroundService {
     let page = 1;
     let allData = [];
     let hasMore = true;
-    const maxPages = isCompanySearch ? 10 : 20; // Allow up to 20 pages for people search (2,000 contacts max with 100 per page)
+    const maxPages = isCompanySearch ? 40 : 80; // Allow up to 80 pages for people search (2,000 contacts max with 25 per page)
 
     port.postMessage({ 
       type: 'PROGRESS_UPDATE', 
@@ -176,12 +184,12 @@ class BackgroundService {
         // Check if we have more data
         const currentBatchSize = processedData.transformedData.length;
         const maxContacts = isCompanySearch ? 1000 : 2000;
-        hasMore = currentBatchSize === 100 && allData.length < maxContacts;
+        hasMore = currentBatchSize === 25 && allData.length < maxContacts;
         
         console.log(`[HP Extension Background] Page ${page}: Got ${currentBatchSize} contacts, Total: ${allData.length}, HasMore: ${hasMore}, MaxContacts: ${maxContacts}`);
         
-        if (currentBatchSize < 100) {
-          console.log(`[HP Extension Background] Stopping because batch size (${currentBatchSize}) is less than 100`);
+        if (currentBatchSize < 25) {
+          console.log(`[HP Extension Background] Stopping because batch size (${currentBatchSize}) is less than 25`);
         }
         if (allData.length >= maxContacts) {
           console.log(`[HP Extension Background] Stopping because reached max contacts (${maxContacts})`);
@@ -242,7 +250,7 @@ class BackgroundService {
     try {
       const url = new URL(salesUrl);
       const params = new URLSearchParams(url.search);
-      const start = (page - 1) * 100;
+      const start = (page - 1) * 25;
       
       const recentSearchId = params.get('recentSearchId');
       const savedSearchId = params.get('savedSearchId');
@@ -252,11 +260,11 @@ class BackgroundService {
       const decoration = 'com.linkedin.sales.deco.desktop.searchv2.LeadSearchResult-14';
 
       if (recentSearchId) {
-        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=recentSearchId&start=${start}&count=100&recentSearchId=${recentSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=recentSearchId&start=${start}&count=25&recentSearchId=${recentSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
       } else if (savedSearchId) {
-        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=savedSearchId&start=${start}&count=100&savedSearchId=${savedSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=savedSearchId&start=${start}&count=25&savedSearchId=${savedSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
       } else if (queryParam) {
-        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=searchQuery&query=${queryParam}&start=${start}&count=100&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+        return `https://www.linkedin.com/sales-api/salesApiLeadSearch?q=searchQuery&query=${queryParam}&start=${start}&count=25&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
       }
 
       return null;
@@ -270,7 +278,7 @@ class BackgroundService {
     try {
       const url = new URL(salesUrl);
       const params = new URLSearchParams(url.search);
-      const start = (page - 1) * 100;
+      const start = (page - 1) * 25;
       
       const savedSearchId = params.get('savedSearchId');
       const sessionId = params.get('sessionId');
@@ -279,9 +287,9 @@ class BackgroundService {
       const decoration = 'com.linkedin.sales.deco.desktop.searchv2.AccountSearchResult-4';
 
       if (savedSearchId) {
-        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=savedSearchId&start=${start}&count=100&savedSearchId=${savedSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=savedSearchId&start=${start}&count=25&savedSearchId=${savedSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
       } else if (queryParam) {
-        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=searchQuery&query=${queryParam}&start=${start}&count=100&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=searchQuery&query=${queryParam}&start=${start}&count=25&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
       }
 
       return null;
@@ -489,11 +497,29 @@ class BackgroundService {
 
       // Step 1: Get existing segment data
       console.log('📋 Getting existing segment data...');
+      const cookies = await this.getStoredCookies();
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      
+      if (cookies) {
+        headers['Cookie'] = cookies;
+        
+        // If we have _hp_auth_session but not session, try to use _hp_auth_session as session
+        if (cookies.includes('_hp_auth_session') && !cookies.includes('session=')) {
+          console.log('[HP Extension Background] Using _hp_auth_session as session cookie for updateSegmentWithSource');
+          const authSessionMatch = cookies.match(/_hp_auth_session=([^;]+)/);
+          if (authSessionMatch) {
+            const sessionValue = authSessionMatch[1];
+            headers['Cookie'] = `${cookies}; session=${sessionValue}`;
+            console.log('[HP Extension Background] Updated updateSegmentWithSource cookie string with session cookie');
+          }
+        }
+      }
+
       const getSegmentResponse = await fetch(`https://app.highperformr.ai/api/segments/${segmentId}?accountId=${accountId}`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: headers,
         credentials: 'include'
       });
 
@@ -532,9 +558,7 @@ class BackgroundService {
 
       const response = await fetch(`https://app.highperformr.ai/api/segments/${segmentId}?accountId=${accountId}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: headers,
         credentials: 'include',
         body: JSON.stringify(patchBody)
       });
@@ -550,9 +574,7 @@ class BackgroundService {
       console.log('🔍 Verifying segment update...');
       const verifyResponse = await fetch(`https://app.highperformr.ai/api/segments/${segmentId}?accountId=${accountId}`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: headers,
         credentials: 'include'
       });
 
@@ -669,20 +691,94 @@ class BackgroundService {
     try {
       console.log('[HP Extension Background] Capturing cookies from domain:', domain);
       
-      // Get all cookies for the domain
-      const cookies = await chrome.cookies.getAll({
-        domain: domain
-      });
+      // Get cookies from ALL possible domain variations to ensure we capture the session cookie
+      const domainVariations = [
+        domain,
+        'app.highperformr.ai',
+        'auth.highperformr.ai', 
+        'highperformr.ai',
+        '.app.highperformr.ai',
+        '.auth.highperformr.ai',
+        '.highperformr.ai',
+        'www.highperformr.ai',
+        '.www.highperformr.ai'
+      ];
       
-      console.log('[HP Extension Background] Found cookies for domain:', cookies.length);
+      console.log('[HP Extension Background] Trying to capture cookies from domains:', domainVariations);
+      
+      let allCookies = [];
+      
+      for (const domainVar of domainVariations) {
+        try {
+          const cookies = await chrome.cookies.getAll({
+            domain: domainVar
+          });
+          console.log(`[HP Extension Background] Found ${cookies.length} cookies for domain: ${domainVar}`);
+          
+          // Log individual cookie names for debugging, with special attention to session cookies
+          cookies.forEach(cookie => {
+            const isSessionCookie = cookie.name === 'session' || cookie.name.includes('session') || cookie.name.includes('auth');
+            const logPrefix = isSessionCookie ? '🔑 SESSION COOKIE:' : '[HP Extension Background] Cookie:';
+            console.log(`${logPrefix} ${cookie.name} (domain: ${cookie.domain}, path: ${cookie.path}, secure: ${cookie.secure}, httpOnly: ${cookie.httpOnly}, value: ${cookie.value.substring(0, 50)}...)`);
+            
+            if (cookie.name === 'session') {
+              console.log('🎯 FOUND THE SESSION COOKIE! Domain:', cookie.domain, 'Path:', cookie.path);
+            }
+          });
+          
+          allCookies = allCookies.concat(cookies);
+        } catch (error) {
+          console.log(`[HP Extension Background] Error getting cookies for ${domainVar}:`, error.message);
+        }
+      }
+      
+      // Remove duplicates based on cookie name and domain
+      const uniqueCookies = allCookies.reduce((acc, cookie) => {
+        const key = `${cookie.name}_${cookie.domain}`;
+        if (!acc.find(c => `${c.name}_${c.domain}` === key)) {
+          acc.push(cookie);
+        }
+        return acc;
+      }, []);
+      
+      console.log('[HP Extension Background] Total unique cookies found:', uniqueCookies.length);
       
       // Create cookie string
-      const cookieString = cookies
+      const cookieString = uniqueCookies
         .map(cookie => `${cookie.name}=${cookie.value}`)
         .join('; ');
       
       console.log('[HP Extension Background] Captured cookie string length:', cookieString.length);
       console.log('[HP Extension Background] Captured cookies text:', cookieString);
+      
+      // Log specific important cookies with detailed analysis
+      const importantCookies = ['session', '_hp_auth_session', 'g_csrf_token'];
+      importantCookies.forEach(cookieName => {
+        const cookie = uniqueCookies.find(c => c.name === cookieName);
+        if (cookie) {
+          console.log(`[HP Extension Background] Found important cookie ${cookieName}: ${cookie.value.substring(0, 50)}...`);
+          console.log(`[HP Extension Background] Cookie ${cookieName} domain: ${cookie.domain}, path: ${cookie.path}, secure: ${cookie.secure}, httpOnly: ${cookie.httpOnly}`);
+        } else {
+          console.log(`[HP Extension Background] Missing important cookie: ${cookieName}`);
+        }
+      });
+      
+      // Check if we have the critical session cookie
+      const sessionCookie = uniqueCookies.find(c => c.name === 'session');
+      if (!sessionCookie) {
+        console.log('[HP Extension Background] CRITICAL: No session cookie found! This will cause 401 errors.');
+        
+        // Try to find any cookies that might be the session cookie
+        const possibleSessionCookies = uniqueCookies.filter(c => 
+          c.name.includes('session') || 
+          c.name.includes('auth') || 
+          (c.value && c.value.startsWith('eyJ')) // JWT tokens start with eyJ
+        );
+        
+        console.log('[HP Extension Background] Possible session cookies found:', possibleSessionCookies.map(c => c.name));
+      } else {
+        console.log('[HP Extension Background] SUCCESS: Found session cookie!');
+      }
       
       // Store cookies in extension storage
       await chrome.storage.local.set({
@@ -695,7 +791,7 @@ class BackgroundService {
       sendResponse({ 
         success: true, 
         cookies: cookieString,
-        cookieCount: cookies.length
+        cookieCount: uniqueCookies.length
       });
     } catch (error) {
       console.error('[HP Extension Background] Error capturing cookies from domain:', error);
@@ -703,6 +799,64 @@ class BackgroundService {
         success: false, 
         error: error.message 
       });
+    }
+  }
+
+  async captureCookiesFromActiveTab(sendResponse) {
+    try {
+      console.log('[HP Extension Background] Attempting to capture cookies from active tab');
+      
+      // Get the active tab
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs.length === 0) {
+        console.log('[HP Extension Background] No active tab found');
+        sendResponse({ success: false, error: 'No active tab' });
+        return;
+      }
+      
+      const activeTab = tabs[0];
+      console.log('[HP Extension Background] Active tab URL:', activeTab.url);
+      
+      // Check if the active tab is on highperformr.ai
+      if (!activeTab.url || !activeTab.url.includes('highperformr.ai')) {
+        console.log('[HP Extension Background] Active tab is not on highperformr.ai domain');
+        sendResponse({ success: false, error: 'Active tab not on highperformr.ai' });
+        return;
+      }
+      
+      // Try to get cookies for the active tab's URL
+      const url = new URL(activeTab.url);
+      const domain = url.hostname;
+      console.log('[HP Extension Background] Extracting cookies for active tab domain:', domain);
+      
+      const cookies = await chrome.cookies.getAll({ url: activeTab.url });
+      console.log('[HP Extension Background] Found cookies for active tab:', cookies.length);
+      
+      // Log all cookies found
+      cookies.forEach(cookie => {
+        const isSessionCookie = cookie.name === 'session' || cookie.name.includes('session');
+        const logPrefix = isSessionCookie ? '🔑 ACTIVE TAB SESSION COOKIE:' : '[HP Extension Background] Active tab cookie:';
+        console.log(`${logPrefix} ${cookie.name} (domain: ${cookie.domain}, value: ${cookie.value.substring(0, 50)}...)`);
+      });
+      
+      // Create cookie string
+      const cookieString = cookies
+        .map(cookie => `${cookie.name}=${cookie.value}`)
+        .join('; ');
+      
+      console.log('[HP Extension Background] Active tab cookie string length:', cookieString.length);
+      
+      sendResponse({
+        success: true,
+        cookies: cookieString,
+        cookieCount: cookies.length,
+        source: 'active_tab',
+        tabUrl: activeTab.url
+      });
+      
+    } catch (error) {
+      console.error('[HP Extension Background] Error capturing cookies from active tab:', error);
+      sendResponse({ success: false, error: error.message });
     }
   }
 
@@ -716,12 +870,24 @@ class BackgroundService {
       
       if (cookies) {
         headers['Cookie'] = cookies;
+        
+        // If we have _hp_auth_session but not session, try to use _hp_auth_session as session
+        if (cookies.includes('_hp_auth_session') && !cookies.includes('session=')) {
+          console.log('[HP Extension Background] Using _hp_auth_session as session cookie for workspaces');
+          const authSessionMatch = cookies.match(/_hp_auth_session=([^;]+)/);
+          if (authSessionMatch) {
+            const sessionValue = authSessionMatch[1];
+            headers['Cookie'] = `${cookies}; session=${sessionValue}`;
+            console.log('[HP Extension Background] Updated workspaces cookie string with session cookie');
+          }
+        }
       }
 
       // Use the session API to get workspaces (accounts)
       const response = await fetch('https://app.highperformr.ai/api/users/session', {
         method: 'GET',
-        headers: headers
+        headers: headers,
+        credentials: 'include'
       });
 
       console.log('[HP Extension Background] Workspaces response status:', response.status);
@@ -770,13 +936,25 @@ class BackgroundService {
       
       if (cookies) {
         headers['Cookie'] = cookies;
+        
+        // If we have _hp_auth_session but not session, try to use _hp_auth_session as session
+        if (cookies.includes('_hp_auth_session') && !cookies.includes('session=')) {
+          console.log('[HP Extension Background] Using _hp_auth_session as session cookie for segments');
+          const authSessionMatch = cookies.match(/_hp_auth_session=([^;]+)/);
+          if (authSessionMatch) {
+            const sessionValue = authSessionMatch[1];
+            headers['Cookie'] = `${cookies}; session=${sessionValue}`;
+            console.log('[HP Extension Background] Updated segments cookie string with session cookie');
+          }
+        }
       }
 
       // Use the segments API with the workspace ID as accountId
       const response = await fetch(`https://app.highperformr.ai/api/segments/filter-segments?accountId=${workspaceId}`, {
         method: 'POST',
         headers: headers,
-        body: JSON.stringify({ limit: 1000 })
+        body: JSON.stringify({ limit: 1000 }),
+        credentials: 'include'
       });
 
       console.log('[HP Extension Background] Segments response status:', response.status);
@@ -810,6 +988,127 @@ class BackgroundService {
         success: false, 
         error: error.message,
         segments: []
+      });
+    }
+  }
+
+  async verifySession(sendResponse) {
+    try {
+      console.log('[HP Extension Background] Verifying session');
+      const cookies = await this.getStoredCookies();
+      console.log('[HP Extension Background] Using cookies for verification (length):', cookies.length);
+      console.log('[HP Extension Background] Cookie content:', cookies);
+      
+      // Match the successful browser request headers exactly
+      const headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
+      };
+      
+      if (cookies) {
+        headers['Cookie'] = cookies;
+        
+        // Check for specific important cookies in the cookie string
+        const importantCookies = ['session', '_hp_auth_session', 'g_csrf_token'];
+        importantCookies.forEach(cookieName => {
+          if (cookies.includes(cookieName)) {
+            console.log(`[HP Extension Background] Found ${cookieName} in cookie string`);
+          } else {
+            console.log(`[HP Extension Background] Missing ${cookieName} in cookie string`);
+          }
+        });
+        
+        // Simply use the cookies as captured - the main issue is we need the actual session cookie
+        console.log('[HP Extension Background] Using captured cookies directly');
+        
+        // Check what important cookies we have
+        const hasSessionCookie = cookies.includes('session=');
+        const hasAuthSessionCookie = cookies.includes('_hp_auth_session=');
+        
+        console.log('[HP Extension Background] Has session cookie:', hasSessionCookie);
+        console.log('[HP Extension Background] Has _hp_auth_session cookie:', hasAuthSessionCookie);
+        
+        if (!hasSessionCookie) {
+          console.log('[HP Extension Background] WARNING: No session cookie found - this will likely cause 401 error');
+          console.log('[HP Extension Background] Available cookies:', cookies.split(';').map(c => c.trim().split('=')[0]).join(', '));
+        } else {
+          console.log('[HP Extension Background] SUCCESS: Found session cookie in request');
+        }
+        
+        console.log('[HP Extension Background] Final cookie string length:', headers['Cookie'].length);
+      } else {
+        console.log('[HP Extension Background] No cookies available for session verification');
+      }
+
+      console.log('[HP Extension Background] Making session API call with headers:', headers);
+
+      // Make the session API call from background script (no CORS restrictions)
+      const response = await fetch('https://app.highperformr.ai/api/users/session', {
+        method: 'GET',
+        headers: headers,
+        credentials: 'include'
+      });
+
+      console.log('[HP Extension Background] Session verification response status:', response.status);
+      console.log('[HP Extension Background] Session verification response headers:', [...response.headers.entries()]);
+
+      if (response.ok) {
+        const contentType = response.headers.get('content-type');
+        console.log('[HP Extension Background] Response content-type:', contentType);
+        
+        if (contentType && contentType.includes('application/json')) {
+          const userData = await response.json();
+          console.log('[HP Extension Background] Session verification successful, user data:', userData);
+          
+          // Store the session data
+          await chrome.storage.local.set({
+            isAuthenticated: true,
+            userId: userData.id,
+            accountId: userData.accountId,
+            workspaces: userData.workspaces
+          });
+          
+          sendResponse({ 
+            success: true, 
+            authenticated: true,
+            userData: userData
+          });
+        } else {
+          // Got 200 but not JSON - might still be valid
+          console.log('[HP Extension Background] Got 200 but not JSON - considering session valid');
+          const responseText = await response.text();
+          console.log('[HP Extension Background] Response text (first 200 chars):', responseText.substring(0, 200));
+          
+          sendResponse({ 
+            success: true, 
+            authenticated: true,
+            userData: null
+          });
+        }
+      } else {
+        console.log('[HP Extension Background] Session verification failed with status:', response.status);
+        
+        // Try to get error response body for more details
+        try {
+          const errorText = await response.text();
+          console.log('[HP Extension Background] Error response body:', errorText);
+        } catch (e) {
+          console.log('[HP Extension Background] Could not read error response body');
+        }
+        
+        sendResponse({ 
+          success: true, 
+          authenticated: false,
+          error: `Session verification failed: ${response.status}`
+        });
+      }
+    } catch (error) {
+      console.error('[HP Extension Background] Session verification error:', error);
+      sendResponse({ 
+        success: false, 
+        authenticated: false,
+        error: error.message
       });
     }
   }
@@ -865,13 +1164,25 @@ class HighperformrAPI {
     
     if (cookies) {
       headers['Cookie'] = cookies;
+      
+      // If we have _hp_auth_session but not session, try to use _hp_auth_session as session
+      if (cookies.includes('_hp_auth_session') && !cookies.includes('session=')) {
+        console.log('[HP Extension Background] Using _hp_auth_session as session cookie for createSource');
+        const authSessionMatch = cookies.match(/_hp_auth_session=([^;]+)/);
+        if (authSessionMatch) {
+          const sessionValue = authSessionMatch[1];
+          headers['Cookie'] = `${cookies}; session=${sessionValue}`;
+          console.log('[HP Extension Background] Updated createSource cookie string with session cookie');
+        }
+      }
     }
 
     // Use the exact API endpoint from the network logs
     const response = await fetch(`${this.baseURL}/api/sources/bulk-upsert?accountId=${accountId}`, {
       method: 'POST',
       headers: headers,
-      body: JSON.stringify({ sources: sourceData })
+      body: JSON.stringify({ sources: sourceData }),
+      credentials: 'include'
     });
 
     console.log('[HP Extension Background] Create source response status:', response.status);
@@ -896,13 +1207,25 @@ class HighperformrAPI {
     
     if (cookies) {
       headers['Cookie'] = cookies;
+      
+      // If we have _hp_auth_session but not session, try to use _hp_auth_session as session
+      if (cookies.includes('_hp_auth_session') && !cookies.includes('session=')) {
+        console.log('[HP Extension Background] Using _hp_auth_session as session cookie for addContactsToSource');
+        const authSessionMatch = cookies.match(/_hp_auth_session=([^;]+)/);
+        if (authSessionMatch) {
+          const sessionValue = authSessionMatch[1];
+          headers['Cookie'] = `${cookies}; session=${sessionValue}`;
+          console.log('[HP Extension Background] Updated addContactsToSource cookie string with session cookie');
+        }
+      }
     }
 
     // Use the exact API endpoint from the network logs
     const response = await fetch(`${this.baseURL}/api/contacts/${sourceId}/bulk-upsert-contacts?accountId=${accountId}`, {
       method: 'POST',
       headers: headers,
-      body: JSON.stringify({ contactsData })
+      body: JSON.stringify({ contactsData }),
+      credentials: 'include'
     });
 
     console.log('[HP Extension Background] Add contacts response status:', response.status);
