@@ -1,6 +1,6 @@
 {
-  "name": "linkedin-sales-navigator-integration",
-  "version": "1.0.1",
+  "name": "hp-sales-nav-plugin-v1.0.3",
+  "version": "1.0.3",
   "description": "Chrome extension for LinkedIn Sales Navigator integration with Highperformr.ai",
   "main": "background.js",
   "scripts": {

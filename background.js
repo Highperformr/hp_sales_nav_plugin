@@ -94,7 +94,8 @@ class BackgroundService {
 
       // Send to Highperformr API
       console.log('[HP Extension Background] Sending data to Highperformr API...');
-      await this.sendToHighperformr(data, message.workspace, message.segment, port);
+      const isCompanySearch = message.searchType && message.searchType.includes('Company');
+      await this.sendToHighperformr(data, message.workspace, message.segment, port, isCompanySearch ? 'company' : 'people');
       
       console.log('[HP Extension Background] Import completed successfully');
       port.postMessage({ 
@@ -135,8 +136,8 @@ class BackgroundService {
 
     port.postMessage({ 
       type: 'PROGRESS_UPDATE', 
-      progress: 10, 
-      status: 'Starting data collection...' 
+      progress: 20, 
+      status: 'Initializing data collection steps...' 
     });
 
     while (hasMore && page <= maxPages) {
@@ -174,11 +175,11 @@ class BackgroundService {
         allData = allData.concat(processedData.transformedData);
 
         // Update progress
-        const progress = Math.min(50 + (page * 2), 80);
+        const progress = Math.min(40 + (page * 1.5), 60);
         port.postMessage({ 
           type: 'PROGRESS_UPDATE', 
           progress, 
-          status: `Collected ${allData.length} records...` 
+          status: 'Fetching Sales Navigator data...' 
         });
 
         // Check if we have more data
@@ -283,16 +284,44 @@ class BackgroundService {
       const savedSearchId = params.get('savedSearchId');
       const sessionId = params.get('sessionId');
       const queryParam = params.get('query');
+      const recentSearchId = params.get('recentSearchId');
 
       const decoration = 'com.linkedin.sales.deco.desktop.searchv2.AccountSearchResult-4';
 
+      // Handle saved searches
       if (savedSearchId) {
         return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=savedSearchId&start=${start}&count=25&savedSearchId=${savedSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
-      } else if (queryParam) {
+      } 
+      // Handle query searches
+      else if (queryParam) {
         return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=searchQuery&query=${queryParam}&start=${start}&count=25&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
       }
-
-      return null;
+      // Handle recent searches
+      else if (recentSearchId) {
+        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?q=recentSearchId&start=${start}&count=25&recentSearchId=${recentSearchId}&trackingParam=(sessionId:${sessionId})&decorationId=${decoration}`;
+      }
+      // Handle list searches - extract list parameters from URL
+      else {
+        // For list searches, we need to extract the list parameters
+        const listParams = new URLSearchParams();
+        
+        // Copy all relevant parameters from the original URL
+        for (const [key, value] of params.entries()) {
+          if (key !== 'sessionId' && key !== 'savedSearchId' && key !== 'query' && key !== 'recentSearchId') {
+            listParams.append(key, value);
+          }
+        }
+        
+        // Add pagination and decoration parameters
+        listParams.append('start', start.toString());
+        listParams.append('count', '25');
+        if (sessionId) {
+          listParams.append('trackingParam', `(sessionId:${sessionId})`);
+        }
+        listParams.append('decorationId', decoration);
+        
+        return `https://www.linkedin.com/sales-api/salesApiAccountSearch?${listParams.toString()}`;
+      }
     } catch (error) {
       console.error('Error creating Company Sales Navigator API URL:', error);
       return null;
@@ -343,12 +372,20 @@ class BackgroundService {
 
       const transformedData = data.elements.map(element => {
         try {
+          // Extract entity ID from entityUrn (format: urn:li:fs_salesCompany:123456)
+          const entityUrn = element.entityUrn || '';
+          const entityId = entityUrn.replace('urn:li:fs_salesCompany:', '');
+          const linkedinUrl = entityId ? `linkedin.com/company/${entityId}` : '';
+          
+          // Create company details object as specified
+          const companyDetails = {
+            companyName: element.companyName || '',
+            industry: element.industry || ''
+          };
+
           return {
-            'CompanyName': element.name || '',
-            'Industry': element.industry || '',
-            'Location': element.location || '',
-            'CompanySize': element.companySize || '',
-            'Website': element.website || ''
+            'contactRecord': companyDetails,
+            'CompanyLinkedin': linkedinUrl
           };
         } catch (error) {
           console.error('Error processing company data:', error);
@@ -356,9 +393,10 @@ class BackgroundService {
         }
       }).filter(Boolean);
 
+      const totalRecords = data.paging?.total || transformedData.length;
       return { 
         transformedData, 
-        totalRecords: data.paging?.total || transformedData.length 
+        totalRecords 
       };
     } catch (error) {
       console.error('Error processing company data:', error);
@@ -376,12 +414,17 @@ class BackgroundService {
     }
   }
 
-  async sendToHighperformr(data, workspaceId, segmentId, port) {
+  async sendToHighperformr(data, workspaceId, segmentId, port, searchType = 'people') {
     try {
+      // Set appropriate status message based on search type
+      const statusMessage = searchType === 'company' 
+        ? 'Adding LinkedIn Company from Sales Navigator as audience to segment...'
+        : 'Processing data...';
+        
       port.postMessage({ 
         type: 'PROGRESS_UPDATE', 
-        progress: 85, 
-        status: 'Sending data to Highperformr.ai...' 
+        progress: 60, 
+        status: statusMessage 
       });
 
       // Get user data
@@ -398,30 +441,49 @@ class BackgroundService {
 
       const api = new HighperformrAPI();
       
-      // Create source data exactly as shown in network logs
+      // Determine field mapping based on search type
+      let fieldMapping, searchText;
+      if (searchType === 'company') {
+        searchText = `SN-${new Date().toISOString().replace(/[:.]/g, '-')} - company search`;
+        fieldMapping = [
+          {
+            sourceFieldName: 'contactRecord',
+            hpFieldName: 'contact.contactRecord'
+          },
+          {
+            sourceFieldName: 'CompanyLinkedin',
+            hpFieldName: 'company.companyLinkedin'
+          }
+        ];
+      } else {
+        searchText = `SN-${new Date().toISOString().replace(/[:.]/g, '-')} - people search`;
+        fieldMapping = [
+          { hpFieldName: 'contact.linkedIn', sourceFieldName: 'Linkedin' },
+          { sourceFieldName: 'FullName', hpFieldName: 'contact.fullName' },
+          { sourceFieldName: 'FirstName', hpFieldName: 'contact.firstName' },
+          { sourceFieldName: 'LastName', hpFieldName: 'contact.lastName' },
+          { sourceFieldName: 'JobTitle', hpFieldName: 'contact.title' },
+          { sourceFieldName: 'Country', hpFieldName: 'contact.country' },
+          { sourceFieldName: 'State', hpFieldName: 'contact.state' },
+          { sourceFieldName: 'City', hpFieldName: 'contact.city' },
+          { sourceFieldName: 'contactRecord', hpFieldName: 'contact.contactRecord' }
+        ];
+      }
+      
+      // Create source data with appropriate field mapping
       const sourceData = [{
         sourceType: 'importFromWebhook',
         sourceMeta: {
-          text: `SN-${new Date().toISOString().replace(/[:.]/g, '-')} - people search`,
+          text: searchText,
           config: {
-            fieldMapping: [
-              { hpFieldName: 'contact.linkedIn', sourceFieldName: 'Linkedin' },
-              { sourceFieldName: 'FullName', hpFieldName: 'contact.fullName' },
-              { sourceFieldName: 'FirstName', hpFieldName: 'contact.firstName' },
-              { sourceFieldName: 'LastName', hpFieldName: 'contact.lastName' },
-              { sourceFieldName: 'JobTitle', hpFieldName: 'contact.title' },
-              { sourceFieldName: 'Country', hpFieldName: 'contact.country' },
-              { sourceFieldName: 'State', hpFieldName: 'contact.state' },
-              { sourceFieldName: 'City', hpFieldName: 'contact.city' },
-              { sourceFieldName: 'contactRecord', hpFieldName: 'contact.contactRecord' }
-            ]
+            fieldMapping: fieldMapping
           }
         }
       }];
 
       port.postMessage({ 
         type: 'PROGRESS_UPDATE', 
-        progress: 85, 
+        progress: 80, 
         status: 'Creating source...' 
       });
 
@@ -474,7 +536,7 @@ class BackgroundService {
       port.postMessage({ 
         type: 'PROGRESS_UPDATE', 
         progress: 100, 
-        status: 'Import completed successfully!' 
+        status: 'Complete!' 
       });
 
     } catch (error) {
