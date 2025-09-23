@@ -1,12 +1,98 @@
 // Background Service Worker for LinkedIn Sales Navigator Integration
 console.log('[HP Extension Background] Background script loaded');
 
+// Contact Limit Manager Class
+class ContactLimitManager {
+  constructor() {
+    this.STORAGE_KEY = 'contactImportLimits';
+    this.MAX_CONTACTS_PER_24H = 1500;
+    this.TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+  }
+
+  async getCurrentLimits() {
+    try {
+      const result = await chrome.storage.local.get([this.STORAGE_KEY]);
+      const limits = result[this.STORAGE_KEY] || [];
+      
+      // Clean up old records (older than 24 hours)
+      const now = Date.now();
+      const validLimits = limits.filter(record => 
+        (now - record.timestamp) < this.TWENTY_FOUR_HOURS_MS
+      );
+      
+      // Update storage if we removed old records
+      if (validLimits.length !== limits.length) {
+        await chrome.storage.local.set({ [this.STORAGE_KEY]: validLimits });
+      }
+      
+      return validLimits;
+    } catch (error) {
+      console.error('[HP Extension Background] Error getting contact limits:', error);
+      return [];
+    }
+  }
+
+  async getTotalContactsInLast24Hours() {
+    const limits = await this.getCurrentLimits();
+    return limits.reduce((total, record) => total + record.contactCount, 0);
+  }
+
+  async canImportContacts(contactCount) {
+    const currentTotal = await this.getTotalContactsInLast24Hours();
+    return (currentTotal + contactCount) <= this.MAX_CONTACTS_PER_24H;
+  }
+
+  async recordImport(contactCount) {
+    try {
+      const limits = await this.getCurrentLimits();
+      const newRecord = {
+        timestamp: Date.now(),
+        contactCount: contactCount
+      };
+      
+      limits.push(newRecord);
+      await chrome.storage.local.set({ [this.STORAGE_KEY]: limits });
+      
+      console.log(`[HP Extension Background] Recorded import of ${contactCount} contacts. Total in last 24h: ${await this.getTotalContactsInLast24Hours()}`);
+    } catch (error) {
+      console.error('[HP Extension Background] Error recording import:', error);
+    }
+  }
+
+  async getTimeUntilReset() {
+    const limits = await this.getCurrentLimits();
+    if (limits.length === 0) {
+      return 0; // No imports in last 24 hours
+    }
+    
+    // Find the oldest record
+    const oldestRecord = limits.reduce((oldest, record) => 
+      record.timestamp < oldest.timestamp ? record : oldest
+    );
+    
+    const timeUntilReset = this.TWENTY_FOUR_HOURS_MS - (Date.now() - oldestRecord.timestamp);
+    return Math.max(0, timeUntilReset);
+  }
+
+  formatTimeUntilReset(milliseconds) {
+    const hours = Math.floor(milliseconds / (1000 * 60 * 60));
+    const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (hours > 0) {
+      return `${hours} hour${hours > 1 ? 's' : ''} and ${minutes} minute${minutes > 1 ? 's' : ''}`;
+    } else {
+      return `${minutes} minute${minutes > 1 ? 's' : ''}`;
+    }
+  }
+}
+
 class BackgroundService {
   constructor() {
     console.log('[HP Extension Background] BackgroundService constructor called');
     this.setupMessageHandlers();
     this.globalCookieData = null;
     this.rateLimiter = new RateLimiter(30, 60000); // 30 requests per minute (allowing for 2-second delays)
+    this.contactLimitManager = new ContactLimitManager();
   }
 
   setupMessageHandlers() {
@@ -56,10 +142,50 @@ class BackgroundService {
         console.log('[HP Extension Background] Capturing cookies from active tab');
         this.captureCookiesFromActiveTab(sendResponse);
         return true; // Keep message channel open for async response
+      case 'CHECK_CONTACT_LIMIT':
+        console.log('[HP Extension Background] Checking contact limit for:', message.contactCount);
+        this.checkContactLimit(message.contactCount, sendResponse);
+        return true; // Keep message channel open for async response
       default:
         console.log('[HP Extension Background] Unknown message type:', message.type);
       }
     });
+  }
+
+  async checkContactLimit(contactCount, sendResponse) {
+    try {
+      console.log('[HP Extension Background] Checking contact limit for', contactCount, 'contacts');
+      
+      const canImport = await this.contactLimitManager.canImportContacts(contactCount);
+      const currentTotal = await this.contactLimitManager.getTotalContactsInLast24Hours();
+      
+      if (canImport) {
+        sendResponse({
+          success: true,
+          canImport: true,
+          currentTotal: currentTotal,
+          remaining: this.contactLimitManager.MAX_CONTACTS_PER_24H - currentTotal
+        });
+      } else {
+        const timeUntilReset = await this.contactLimitManager.getTimeUntilReset();
+        const formattedTime = this.contactLimitManager.formatTimeUntilReset(timeUntilReset);
+        
+        sendResponse({
+          success: true,
+          canImport: false,
+          currentTotal: currentTotal,
+          limit: this.contactLimitManager.MAX_CONTACTS_PER_24H,
+          timeUntilReset: formattedTime,
+          timeUntilResetMs: timeUntilReset
+        });
+      }
+    } catch (error) {
+      console.error('[HP Extension Background] Error checking contact limit:', error);
+      sendResponse({
+        success: false,
+        error: error.message
+      });
+    }
   }
 
   async handleSalesNavImport(message, sender) {
@@ -92,10 +218,32 @@ class BackgroundService {
         return;
       }
 
+      // Check contact limit before proceeding with import
+      console.log('[HP Extension Background] Checking contact limit before import...');
+      const canImport = await this.contactLimitManager.canImportContacts(data.length);
+      
+      if (!canImport) {
+        console.log('[HP Extension Background] Contact limit exceeded, blocking import');
+        const timeUntilReset = await this.contactLimitManager.getTimeUntilReset();
+        const formattedTime = this.contactLimitManager.formatTimeUntilReset(timeUntilReset);
+        
+        port.postMessage({ 
+          type: 'LIMIT_EXCEEDED', 
+          error: `Daily contact limit of ${this.contactLimitManager.MAX_CONTACTS_PER_24H} reached. Try again in ${formattedTime}.`,
+          timeUntilReset: formattedTime,
+          timeUntilResetMs: timeUntilReset
+        });
+        return;
+      }
+
       // Send to Highperformr API
       console.log('[HP Extension Background] Sending data to Highperformr API...');
       const isCompanySearch = message.searchType && message.searchType.includes('Company');
       await this.sendToHighperformr(data, message.workspace, message.segment, port, isCompanySearch ? 'company' : 'people');
+      
+      // Record the successful import
+      console.log('[HP Extension Background] Recording successful import...');
+      await this.contactLimitManager.recordImport(data.length);
       
       console.log('[HP Extension Background] Import completed successfully');
       port.postMessage({ 

@@ -926,8 +926,27 @@ class LinkedInSalesNavIntegration {
         return;
       }
 
+      // Get current contact limit information
+      let contactLimitInfo = null;
+      try {
+        const limitResponse = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({
+            type: 'CHECK_CONTACT_LIMIT',
+            contactCount: 0 // Just check current status
+          }, (response) => {
+            resolve(response);
+          });
+        });
+        
+        if (limitResponse && limitResponse.success) {
+          contactLimitInfo = limitResponse;
+        }
+      } catch (error) {
+        console.log('[HP Extension] Could not get contact limit info:', error);
+      }
+
       // Create modal with workspaces (segments will be fetched when workspace is selected)
-      const modal = this.createWorkspaceModal(workspaces);
+      const modal = this.createWorkspaceModal(workspaces, contactLimitInfo);
       document.body.appendChild(modal);
     } catch (error) {
       console.error('[HP Extension] Error showing workspace modal:', error);
@@ -935,7 +954,38 @@ class LinkedInSalesNavIntegration {
     }
   }
 
-  createWorkspaceModal(workspaces) {
+  createWorkspaceModal(workspaces, contactLimitInfo = null) {
+    // Create contact limit info section
+    let contactLimitSection = '';
+    if (contactLimitInfo) {
+      const remaining = contactLimitInfo.remaining || (1500 - contactLimitInfo.currentTotal);
+      const isNearLimit = remaining < 100;
+      const limitColor = isNearLimit ? '#e74c3c' : '#27ae60';
+      
+      contactLimitSection = `
+        <div class="hp-form-group" style="margin-bottom: 20px;">
+          <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; border-left: 4px solid ${limitColor};">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong style="color: #333;">Daily Contact Limit</strong>
+                <div style="font-size: 14px; color: #666; margin-top: 4px;">
+                  ${contactLimitInfo.currentTotal || 0} / 1,500 contacts used
+                </div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-size: 18px; font-weight: bold; color: ${limitColor};">
+                  ${remaining} remaining
+                </div>
+                <div style="font-size: 12px; color: #666;">
+                  Resets in 24h
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     const modal = document.createElement('div');
     modal.className = 'hp-modal-overlay';
     modal.innerHTML = `
@@ -945,24 +995,37 @@ class LinkedInSalesNavIntegration {
           <button class="hp-modal-close">&times;</button>
         </div>
         <div class="hp-modal-body">
+          ${contactLimitSection}
           <div class="hp-form-group">
             <label>Workspace:</label>
-            <div class="hp-searchable-select">
-              <input type="text" id="hp-workspace-search" placeholder="Search workspaces..." />
-              <select id="hp-workspace-select" size="5">
-                ${workspaces.map(ws => 
-    `<option value="${ws.id}">${ws.name}</option>`
+            <div class="hp-custom-dropdown" id="hp-workspace-dropdown">
+              <div class="hp-dropdown-trigger" id="hp-workspace-trigger">
+                <span class="hp-dropdown-text">Select a workspace...</span>
+                <span class="hp-dropdown-arrow">▼</span>
+              </div>
+              <div class="hp-dropdown-content" id="hp-workspace-content">
+                <input type="text" id="hp-workspace-search" placeholder="Search workspaces..." />
+                <div class="hp-dropdown-list" id="hp-workspace-list">
+                  ${workspaces.map(ws => 
+    `<div class="hp-dropdown-item" data-value="${ws.id}">${ws.name}</div>`
   ).join('')}
-              </select>
+                </div>
+              </div>
             </div>
           </div>
           <div class="hp-form-group">
             <label>Segment:</label>
-            <div class="hp-searchable-select">
-              <input type="text" id="hp-segment-search" placeholder="Select a workspace first..." disabled />
-              <select id="hp-segment-select" size="5" disabled>
-                <option value="">Select a workspace to load segments</option>
-              </select>
+            <div class="hp-custom-dropdown" id="hp-segment-dropdown">
+              <div class="hp-dropdown-trigger" id="hp-segment-trigger" disabled>
+                <span class="hp-dropdown-text">Select a workspace first...</span>
+                <span class="hp-dropdown-arrow">▼</span>
+              </div>
+              <div class="hp-dropdown-content" id="hp-segment-content">
+                <input type="text" id="hp-segment-search" placeholder="Search segments..." disabled />
+                <div class="hp-dropdown-list" id="hp-segment-list">
+                  <div class="hp-dropdown-item">Select a workspace to load segments</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -983,11 +1046,40 @@ class LinkedInSalesNavIntegration {
     modal.querySelector('#hp-cancel').onclick = () => this.closeModal(modal);
 
     // Get references to elements
+    const workspaceDropdown = modal.querySelector('#hp-workspace-dropdown');
+    const workspaceTrigger = modal.querySelector('#hp-workspace-trigger');
     const workspaceSearch = modal.querySelector('#hp-workspace-search');
-    const workspaceSelect = modal.querySelector('#hp-workspace-select');
+    const workspaceList = modal.querySelector('#hp-workspace-list');
+    const workspaceText = workspaceTrigger.querySelector('.hp-dropdown-text');
+    
+    const segmentDropdown = modal.querySelector('#hp-segment-dropdown');
+    const segmentTrigger = modal.querySelector('#hp-segment-trigger');
     const segmentSearch = modal.querySelector('#hp-segment-search');
-    const segmentSelect = modal.querySelector('#hp-segment-select');
+    const segmentList = modal.querySelector('#hp-segment-list');
+    const segmentText = segmentTrigger.querySelector('.hp-dropdown-text');
+    
     const importButton = modal.querySelector('#hp-import');
+
+    let selectedWorkspaceId = '';
+    let selectedSegmentId = '';
+    let currentSegments = [];
+
+    // Workspace dropdown functionality
+    workspaceTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (workspaceTrigger.hasAttribute('disabled')) {
+        return;
+      }
+      
+      // Close other dropdowns
+      segmentDropdown.classList.remove('hp-dropdown-open');
+      
+      // Toggle workspace dropdown
+      workspaceDropdown.classList.toggle('hp-dropdown-open');
+      if (workspaceDropdown.classList.contains('hp-dropdown-open')) {
+        workspaceSearch.focus();
+      }
+    });
 
     // Workspace search functionality
     workspaceSearch.addEventListener('input', (e) => {
@@ -996,95 +1088,127 @@ class LinkedInSalesNavIntegration {
         ws.name.toLowerCase().includes(searchTerm)
       );
       
-      workspaceSelect.innerHTML = filteredWorkspaces.map(ws => 
-        `<option value="${ws.id}">${ws.name}</option>`
+      workspaceList.innerHTML = filteredWorkspaces.map(ws => 
+        `<div class="hp-dropdown-item" data-value="${ws.id}">${ws.name}</div>`
       ).join('');
     });
 
-    // Workspace selection - fetch segments when workspace changes
-    workspaceSelect.addEventListener('change', async (e) => {
-      const workspaceId = e.target.value;
-      console.log('[HP Extension] Workspace selected:', workspaceId);
-      
-      if (workspaceId) {
-        // Show loading state
-        segmentSearch.placeholder = 'Loading segments...';
-        segmentSelect.innerHTML = '<option value="">Loading segments...</option>';
-        segmentSelect.disabled = true;
+    // Workspace item selection
+    workspaceList.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('hp-dropdown-item')) {
+        const workspaceId = e.target.getAttribute('data-value');
+        const workspaceName = e.target.textContent;
+        
+        selectedWorkspaceId = workspaceId;
+        workspaceText.textContent = workspaceName;
+        workspaceDropdown.classList.remove('hp-dropdown-open');
+        workspaceSearch.value = '';
+        
+        console.log('[HP Extension] Workspace selected:', workspaceId);
+        
+        // Reset segment selection
+        selectedSegmentId = '';
+        segmentText.textContent = 'Loading segments...';
+        segmentTrigger.setAttribute('disabled', 'true');
         segmentSearch.disabled = true;
         importButton.disabled = true;
         
         try {
           const segments = await this.fetchSegmentsFromBackground(workspaceId);
           console.log('[HP Extension] Fetched segments for workspace:', segments.length);
+          currentSegments = segments;
           
           if (segments.length > 0) {
-            segmentSelect.innerHTML = segments.map(seg => 
-              `<option value="${seg.id}">${seg.name}</option>`
+            segmentList.innerHTML = segments.map(seg => 
+              `<div class="hp-dropdown-item" data-value="${seg.id}">${seg.name}</div>`
             ).join('');
-            segmentSearch.placeholder = 'Search segments...';
-            segmentSelect.disabled = false;
+            segmentText.textContent = 'Select a segment...';
+            segmentTrigger.removeAttribute('disabled');
             segmentSearch.disabled = false;
+            segmentSearch.placeholder = 'Search segments...';
           } else {
-            segmentSelect.innerHTML = '<option value="">No segments found</option>';
+            segmentList.innerHTML = '<div class="hp-dropdown-item">No segments found</div>';
+            segmentText.textContent = 'No segments found';
             segmentSearch.placeholder = 'No segments available';
           }
         } catch (error) {
           console.error('[HP Extension] Error fetching segments:', error);
-          segmentSelect.innerHTML = '<option value="">Error loading segments</option>';
+          segmentList.innerHTML = '<div class="hp-dropdown-item">Error loading segments</div>';
+          segmentText.textContent = 'Error loading segments';
           segmentSearch.placeholder = 'Error loading segments';
         }
-      } else {
-        // Reset segment dropdown
-        segmentSelect.innerHTML = '<option value="">Select a workspace to load segments</option>';
-        segmentSelect.disabled = true;
-        segmentSearch.disabled = true;
-        segmentSearch.placeholder = 'Select a workspace first...';
-        importButton.disabled = true;
+      }
+    });
+
+    // Segment dropdown functionality
+    segmentTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (segmentTrigger.hasAttribute('disabled')) {
+        return;
+      }
+      
+      // Close other dropdowns
+      workspaceDropdown.classList.remove('hp-dropdown-open');
+      
+      // Toggle segment dropdown
+      segmentDropdown.classList.toggle('hp-dropdown-open');
+      if (segmentDropdown.classList.contains('hp-dropdown-open')) {
+        segmentSearch.focus();
       }
     });
 
     // Segment search functionality
-    let currentSegments = [];
     segmentSearch.addEventListener('input', (e) => {
       const searchTerm = e.target.value.toLowerCase();
       const filteredSegments = currentSegments.filter(seg => 
         seg.name.toLowerCase().includes(searchTerm)
       );
       
-      segmentSelect.innerHTML = filteredSegments.map(seg => 
-        `<option value="${seg.id}">${seg.name}</option>`
+      segmentList.innerHTML = filteredSegments.map(seg => 
+        `<div class="hp-dropdown-item" data-value="${seg.id}">${seg.name}</div>`
       ).join('');
     });
 
-    // Store current segments when they're loaded
-    const originalFetchSegmentsFromBackground = this.fetchSegmentsFromBackground.bind(this);
-    this.fetchSegmentsFromBackground = async (workspaceId) => {
-      const segments = await originalFetchSegmentsFromBackground(workspaceId);
-      currentSegments = segments;
-      return segments;
-    };
+    // Segment item selection
+    segmentList.addEventListener('click', (e) => {
+      if (e.target.classList.contains('hp-dropdown-item')) {
+        const segmentId = e.target.getAttribute('data-value');
+        const segmentName = e.target.textContent;
+        
+        if (segmentId) {
+          selectedSegmentId = segmentId;
+          segmentText.textContent = segmentName;
+          segmentDropdown.classList.remove('hp-dropdown-open');
+          segmentSearch.value = '';
+          
+          console.log('[HP Extension] Segment selected:', segmentId);
+          
+          // Enable import button
+          importButton.disabled = false;
+        }
+      }
+    });
+
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!workspaceDropdown.contains(e.target)) {
+        workspaceDropdown.classList.remove('hp-dropdown-open');
+      }
+      if (!segmentDropdown.contains(e.target)) {
+        segmentDropdown.classList.remove('hp-dropdown-open');
+      }
+    });
 
     // Import button
     importButton.onclick = () => {
-      const workspaceId = workspaceSelect.value;
-      const segmentId = segmentSelect.value;
-
-      if (!workspaceId || !segmentId) {
+      if (!selectedWorkspaceId || !selectedSegmentId) {
         this.showError('Please select both workspace and segment');
         return;
       }
 
       this.closeModal(modal);
-      this.startDataImport(workspaceId, segmentId);
+      this.startDataImport(selectedWorkspaceId, selectedSegmentId);
     };
-
-    // Enable import button when both workspace and segment are selected
-    segmentSelect.addEventListener('change', () => {
-      const workspaceId = workspaceSelect.value;
-      const segmentId = segmentSelect.value;
-      importButton.disabled = !workspaceId || !segmentId;
-    });
   }
 
 
@@ -1165,7 +1289,57 @@ class LinkedInSalesNavIntegration {
       progressText.textContent = `Error: ${message.error}`;
       progressText.style.color = '#e74c3c';
       break;
+    case 'LIMIT_EXCEEDED':
+      this.closeModal(modal);
+      this.showLimitExceededModal(message);
+      break;
     }
+  }
+
+  showLimitExceededModal(message) {
+    console.log('[HP Extension] Showing limit exceeded modal');
+    const modal = document.createElement('div');
+    modal.className = 'hp-modal-overlay';
+    modal.innerHTML = `
+      <div class="hp-modal">
+        <div class="hp-modal-header">
+          <h3>Daily Contact Limit Reached</h3>
+          <button class="hp-modal-close">&times;</button>
+        </div>
+        <div class="hp-modal-body">
+          <div style="text-align: center; margin: 20px 0;">
+            <div style="font-size: 48px; color: #e74c3c; margin-bottom: 16px;">⚠️</div>
+            <p style="font-size: 16px; margin-bottom: 16px; color: #333;">
+              You have reached the daily limit of <strong>1,500 contacts</strong> that can be imported in a 24-hour period.
+            </p>
+            <p style="font-size: 14px; color: #666; margin-bottom: 20px;">
+              Please try again in <strong>${message.timeUntilReset}</strong>.
+            </p>
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; border-left: 4px solid #e74c3c;">
+              <p style="margin: 0; font-size: 14px; color: #666;">
+                <strong>Note:</strong> This limit resets every 24 hours from your first import of the day.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="hp-modal-footer">
+          <button class="hp-btn-primary" id="hp-limit-ok">OK</button>
+        </div>
+      </div>
+    `;
+
+    // Setup event listeners
+    modal.querySelector('.hp-modal-close').onclick = () => {
+      console.log('[HP Extension] Limit exceeded modal closed');
+      this.closeModal(modal);
+    };
+    modal.querySelector('#hp-limit-ok').onclick = () => {
+      console.log('[HP Extension] Limit exceeded modal OK clicked');
+      this.closeModal(modal);
+    };
+
+    document.body.appendChild(modal);
+    console.log('[HP Extension] Limit exceeded modal added to page');
   }
 
   closeModal(modal) {

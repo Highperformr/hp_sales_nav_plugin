@@ -143,7 +143,127 @@
   letter-spacing: -0.3px;
 }
 
-/* Searchable Select */
+/* Custom Dropdown */
+.hp-custom-dropdown {
+  position: relative;
+  width: 100%;
+}
+
+.hp-dropdown-trigger {
+  width: 100%;
+  padding: 16px 20px;
+  border: 2px solid #e9ecef;
+  border-radius: 12px;
+  font-size: 15px;
+  background: #ffffff;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  box-sizing: border-box;
+}
+
+.hp-dropdown-trigger:hover {
+  border-color: #4CA30D;
+  box-shadow: 0 0 0 4px rgba(22, 160, 133, 0.1), 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.hp-dropdown-trigger[disabled] {
+  background: #f8f9fa;
+  color: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.hp-dropdown-trigger[disabled]:hover {
+  border-color: #e9ecef;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  transform: none;
+}
+
+.hp-dropdown-text {
+  flex: 1;
+  text-align: left;
+  color: #1a1a1a;
+}
+
+.hp-dropdown-arrow {
+  color: #6c757d;
+  transition: transform 0.2s ease;
+  font-size: 12px;
+}
+
+.hp-custom-dropdown.hp-dropdown-open .hp-dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+.hp-dropdown-content {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #ffffff;
+  border: 2px solid #e9ecef;
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: all 0.3s ease;
+  transform: translateY(-10px);
+}
+
+.hp-custom-dropdown.hp-dropdown-open .hp-dropdown-content {
+  max-height: 300px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hp-dropdown-content input {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-bottom: 1px solid #e9ecef;
+  font-size: 14px;
+  background: #ffffff;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.hp-dropdown-content input:focus {
+  border-bottom-color: #4CA30D;
+}
+
+.hp-dropdown-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.hp-dropdown-item {
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
+  color: #1a1a1a;
+  border-bottom: 1px solid #f1f3f4;
+}
+
+.hp-dropdown-item:hover {
+  background: #f0f9ff;
+  color: #4CA30D;
+  transform: translateX(4px);
+}
+
+.hp-dropdown-item:last-child {
+  border-bottom: none;
+}
+
+/* Searchable Select (Legacy - keeping for compatibility) */
 .hp-searchable-select {
   position: relative;
 }
