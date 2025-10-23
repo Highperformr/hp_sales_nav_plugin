@@ -29,16 +29,34 @@ class LinkedInSalesNavIntegration {
     const url = window.location.href;
     console.log('[HP Extension] Checking URL:', url);
     
-    // Check for Sales Navigator people search
-    if (url.includes('/sales/search/people') && url.includes('query=')) {
+    // Comprehensive Sales Navigator URL detection
+    // Handle all possible Sales Navigator search patterns
+    
+    // 1. People searches - any URL containing /sales/search/people
+    if (url.includes('/sales/search/people')) {
       console.log('[HP Extension] Detected Sales Navigator people search');
       return { allowed: true, type: 'salesNavigatorPeople' };
     }
     
-    // Check for Sales Navigator company search
-    if (url.includes('/sales/search/company') && url.includes('query=')) {
+    // 2. Company searches - any URL containing /sales/search/company  
+    if (url.includes('/sales/search/company')) {
       console.log('[HP Extension] Detected Sales Navigator company search');
       return { allowed: true, type: 'salesNavigatorCompany' };
+    }
+    
+    // 3. Additional Sales Navigator paths that might exist
+    // Handle any other sales navigator search paths
+    if (url.includes('/sales/') && (url.includes('/search/') || url.includes('/leads/') || url.includes('/accounts/'))) {
+      console.log('[HP Extension] Detected Sales Navigator search page');
+      // Determine type based on URL content
+      if (url.includes('/people') || url.includes('/leads')) {
+        return { allowed: true, type: 'salesNavigatorPeople' };
+      } else if (url.includes('/company') || url.includes('/accounts')) {
+        return { allowed: true, type: 'salesNavigatorCompany' };
+      } else {
+        // Default to people search if unclear
+        return { allowed: true, type: 'salesNavigatorPeople' };
+      }
     }
     
     console.log('[HP Extension] URL does not match allowed patterns');
@@ -51,15 +69,23 @@ class LinkedInSalesNavIntegration {
     // Try to inject immediately first
     this.tryInjectUI();
     
-    // Wait for search results to load
+    // Comprehensive mutation observer for search results
     const observer = new MutationObserver(() => {
+      // Check for any search results indicators
       const searchResults = document.querySelector('[data-test-search-results]') || 
                            document.querySelector('.search-results-container') ||
                            document.querySelector('.search-results') ||
-                           document.querySelector('.search-results-container') ||
                            document.querySelector('[data-test-id="search-results"]') ||
                            document.querySelector('.artdeco-entity-lockup') ||
-                           document.querySelector('.reusable-search__result-container');
+                           document.querySelector('.reusable-search__result-container') ||
+                           document.querySelector('[data-sn-view-name="lead-search"]') ||
+                           document.querySelector('[data-sn-view-name="module-lead-search-results"]') ||
+                           document.querySelector('.search-results-list') ||
+                           document.querySelector('.search-results__list') ||
+                           document.querySelector('.entity-lockup') ||
+                           document.querySelector('.entity-lockup__container') ||
+                           document.querySelector('.search-results__container') ||
+                           document.querySelector('.search-results__content');
       
       console.log('[HP Extension] MutationObserver triggered, checking for search results:', !!searchResults);
       console.log('[HP Extension] Existing integration container:', !!document.getElementById('hp-integration-container'));
@@ -75,32 +101,78 @@ class LinkedInSalesNavIntegration {
       subtree: true
     });
 
-    // Also try to inject after a delay
+    // Multiple injection attempts with different timings
     setTimeout(() => {
       this.tryInjectUI();
-    }, 2000);
+    }, 1000);
 
-    // Final fallback - inject after 5 seconds regardless
+    setTimeout(() => {
+      this.tryInjectUI();
+    }, 3000);
+
+    setTimeout(() => {
+      this.tryInjectUI();
+    }, 5000);
+
+    // Final fallback - inject after 8 seconds regardless
     setTimeout(() => {
       if (!document.getElementById('hp-integration-container')) {
         console.log('[HP Extension] Final fallback - injecting UI at top of page');
         this.createIntegrationUI();
       }
-    }, 5000);
+    }, 8000);
+
+    // Additional fallback for slow-loading pages
+    setTimeout(() => {
+      if (!document.getElementById('hp-integration-container')) {
+        console.log('[HP Extension] Extended fallback - forcing UI injection');
+        this.createIntegrationUI();
+      }
+    }, 15000);
   }
 
   tryInjectUI() {
     console.log('[HP Extension] Trying to inject UI');
     if (!document.getElementById('hp-integration-container')) {
-      // Try multiple possible locations for the button
+      // Comprehensive list of possible containers for button injection
       const possibleContainers = [
+        // Primary search result containers
         document.querySelector('.search-results-container'),
         document.querySelector('[data-test-search-results]'),
         document.querySelector('.search-results'),
         document.querySelector('.scaffold-layout__content'),
+        
+        // LinkedIn Sales Navigator specific selectors
+        document.querySelector('[data-sn-view-name="lead-search"]'),
+        document.querySelector('[data-sn-view-name="module-lead-search-results"]'),
         document.querySelector('.search-results-container'),
         document.querySelector('.artdeco-entity-lockup')?.parentElement,
-        document.querySelector('.reusable-search__result-container')?.parentElement
+        document.querySelector('.reusable-search__result-container')?.parentElement,
+        
+        // Additional LinkedIn selectors
+        document.querySelector('.search-results-list'),
+        document.querySelector('.search-results__list'),
+        document.querySelector('.entity-lockup'),
+        document.querySelector('.entity-lockup__container'),
+        document.querySelector('.search-results__container'),
+        document.querySelector('.search-results__content'),
+        
+        // Fallback containers
+        document.querySelector('main'),
+        document.querySelector('[role="main"]'),
+        document.querySelector('.main-content'),
+        document.querySelector('.content'),
+        document.querySelector('.page-content'),
+        
+        // LinkedIn specific fallbacks
+        document.querySelector('.scaffold-layout'),
+        document.querySelector('.scaffold-layout__main'),
+        document.querySelector('.application-outlet'),
+        document.querySelector('.global-nav'),
+        document.querySelector('.global-nav')?.nextElementSibling,
+        
+        // Ultimate fallback - body
+        document.body
       ].filter(Boolean);
 
       console.log('[HP Extension] Found possible containers:', possibleContainers.length);
@@ -137,25 +209,48 @@ class LinkedInSalesNavIntegration {
     let insertionPoint = targetContainer;
     
     if (!insertionPoint) {
-      // Try multiple possible locations
+      // Comprehensive list of possible insertion points
       insertionPoint = document.querySelector('[data-test-search-results]') ||
                      document.querySelector('.search-results-container') ||
                      document.querySelector('.search-results') ||
                      document.querySelector('.scaffold-layout__content') ||
-                     document.querySelector('.artdeco-entity-lockup')?.parentElement ||
-                     document.querySelector('.reusable-search__result-container')?.parentElement;
+                     document.querySelector('[data-sn-view-name="lead-search"]') ||
+                     document.querySelector('[data-sn-view-name="module-lead-search-results"]') ||
+                     document.querySelector('.search-results-list') ||
+                     document.querySelector('.search-results__list') ||
+                     document.querySelector('.entity-lockup')?.parentElement ||
+                     document.querySelector('.reusable-search__result-container')?.parentElement ||
+                     document.querySelector('.search-results__container') ||
+                     document.querySelector('.search-results__content') ||
+                     document.querySelector('main') ||
+                     document.querySelector('[role="main"]') ||
+                     document.querySelector('.main-content') ||
+                     document.querySelector('.content') ||
+                     document.querySelector('.page-content') ||
+                     document.querySelector('.scaffold-layout') ||
+                     document.querySelector('.scaffold-layout__main') ||
+                     document.querySelector('.application-outlet');
     }
     
     console.log('[HP Extension] Insertion point found:', !!insertionPoint);
     
     if (insertionPoint) {
-      // Try to insert at the beginning of the container
-      if (insertionPoint.firstChild) {
-        insertionPoint.insertBefore(container, insertionPoint.firstChild);
-      } else {
-        insertionPoint.appendChild(container);
+      // Try multiple insertion strategies
+      try {
+        // Strategy 1: Insert at the beginning of the container
+        if (insertionPoint.firstChild) {
+          insertionPoint.insertBefore(container, insertionPoint.firstChild);
+          console.log('[HP Extension] Integration UI inserted at beginning of container');
+        } else {
+          insertionPoint.appendChild(container);
+          console.log('[HP Extension] Integration UI appended to container');
+        }
+      } catch (error) {
+        console.log('[HP Extension] Failed to insert into container, trying fallback:', error);
+        // Fallback: insert at the top of the body
+        document.body.insertBefore(container, document.body.firstChild);
+        console.log('[HP Extension] Integration UI inserted at top of body (fallback)');
       }
-      console.log('[HP Extension] Integration UI inserted into page');
     } else {
       // Fallback: insert at the top of the body
       console.log('[HP Extension] No suitable container found, inserting at top of body');
@@ -170,6 +265,26 @@ class LinkedInSalesNavIntegration {
       if (event.target.id === 'hp-integration-button') {
         console.log('[HP Extension] Integration button clicked');
         this.handleIntegrationClick();
+      }
+    });
+
+    // Handle page visibility changes (e.g., when switching tabs)
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !document.getElementById('hp-integration-container')) {
+        console.log('[HP Extension] Page became visible, checking for button injection');
+        setTimeout(() => {
+          this.tryInjectUI();
+        }, 1000);
+      }
+    });
+
+    // Handle page focus changes
+    window.addEventListener('focus', () => {
+      if (!document.getElementById('hp-integration-container')) {
+        console.log('[HP Extension] Page focused, checking for button injection');
+        setTimeout(() => {
+          this.tryInjectUI();
+        }, 1000);
       }
     });
   }
