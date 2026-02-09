@@ -1,9 +1,9 @@
 // LinkedIn Sales Navigator Integration Content Script
-console.log('[HP Extension] Content script loaded on:', window.location.href);
+console.log('[HP Extension] Content script loaded on: ...........', window.location.href);
 
 class LinkedInSalesNavIntegration {
   constructor() {
-    console.log('[HP Extension] LinkedInSalesNavIntegration constructor called');
+    console.log('[HP Extension] LinkedInSalesNavIntegration constructor called ...........');
     this.allowedPaths = {
       salesNavigatorPeople: 'https://www.linkedin.com/sales/search/people',
       salesNavigatorCompany: 'https://www.linkedin.com/sales/search/company'
@@ -15,7 +15,7 @@ class LinkedInSalesNavIntegration {
     console.log('[HP Extension] Initializing LinkedIn Sales Navigator Integration');
     const urlCheck = this.isAllowedUrl();
     console.log('[HP Extension] URL check result:', urlCheck);
-    
+
     if (urlCheck.allowed) {
       console.log('[HP Extension] URL is allowed, injecting UI and setting up event listeners');
       this.injectUI();
@@ -28,22 +28,22 @@ class LinkedInSalesNavIntegration {
   isAllowedUrl() {
     const url = window.location.href;
     console.log('[HP Extension] Checking URL:', url);
-    
+
     // Comprehensive Sales Navigator URL detection
     // Handle all possible Sales Navigator search patterns
-    
+
     // 1. People searches - any URL containing /sales/search/people
     if (url.includes('/sales/search/people')) {
       console.log('[HP Extension] Detected Sales Navigator people search');
       return { allowed: true, type: 'salesNavigatorPeople' };
     }
-    
+
     // 2. Company searches - any URL containing /sales/search/company  
     if (url.includes('/sales/search/company')) {
       console.log('[HP Extension] Detected Sales Navigator company search');
       return { allowed: true, type: 'salesNavigatorCompany' };
     }
-    
+
     // 3. Additional Sales Navigator paths that might exist
     // Handle any other sales navigator search paths
     if (url.includes('/sales/') && (url.includes('/search/') || url.includes('/leads/') || url.includes('/accounts/'))) {
@@ -58,38 +58,38 @@ class LinkedInSalesNavIntegration {
         return { allowed: true, type: 'salesNavigatorPeople' };
       }
     }
-    
+
     console.log('[HP Extension] URL does not match allowed patterns');
     return { allowed: false };
   }
 
   injectUI() {
     console.log('[HP Extension] Setting up UI injection observer');
-    
+
     // Try to inject immediately first
     this.tryInjectUI();
-    
+
     // Comprehensive mutation observer for search results
     const observer = new MutationObserver(() => {
       // Check for any search results indicators
-      const searchResults = document.querySelector('[data-test-search-results]') || 
-                           document.querySelector('.search-results-container') ||
-                           document.querySelector('.search-results') ||
-                           document.querySelector('[data-test-id="search-results"]') ||
-                           document.querySelector('.artdeco-entity-lockup') ||
-                           document.querySelector('.reusable-search__result-container') ||
-                           document.querySelector('[data-sn-view-name="lead-search"]') ||
-                           document.querySelector('[data-sn-view-name="module-lead-search-results"]') ||
-                           document.querySelector('.search-results-list') ||
-                           document.querySelector('.search-results__list') ||
-                           document.querySelector('.entity-lockup') ||
-                           document.querySelector('.entity-lockup__container') ||
-                           document.querySelector('.search-results__container') ||
-                           document.querySelector('.search-results__content');
-      
+      const searchResults = document.querySelector('[data-test-search-results]') ||
+        document.querySelector('.search-results-container') ||
+        document.querySelector('.search-results') ||
+        document.querySelector('[data-test-id="search-results"]') ||
+        document.querySelector('.artdeco-entity-lockup') ||
+        document.querySelector('.reusable-search__result-container') ||
+        document.querySelector('[data-sn-view-name="lead-search"]') ||
+        document.querySelector('[data-sn-view-name="module-lead-search-results"]') ||
+        document.querySelector('.search-results-list') ||
+        document.querySelector('.search-results__list') ||
+        document.querySelector('.entity-lockup') ||
+        document.querySelector('.entity-lockup__container') ||
+        document.querySelector('.search-results__container') ||
+        document.querySelector('.search-results__content');
+
       console.log('[HP Extension] MutationObserver triggered, checking for search results:', !!searchResults);
       console.log('[HP Extension] Existing integration container:', !!document.getElementById('hp-integration-container'));
-      
+
       if (searchResults && !document.getElementById('hp-integration-container')) {
         console.log('[HP Extension] Creating integration UI');
         this.createIntegrationUI();
@@ -137,18 +137,18 @@ class LinkedInSalesNavIntegration {
       // Comprehensive list of possible containers for button injection
       const possibleContainers = [
         // Primary search result containers
-        document.querySelector('.search-results-container'),
+        document.querySelector('.container-plain-no-border-radius'),
         document.querySelector('[data-test-search-results]'),
         document.querySelector('.search-results'),
         document.querySelector('.scaffold-layout__content'),
-        
+
         // LinkedIn Sales Navigator specific selectors
         document.querySelector('[data-sn-view-name="lead-search"]'),
         document.querySelector('[data-sn-view-name="module-lead-search-results"]'),
         document.querySelector('.search-results-container'),
         document.querySelector('.artdeco-entity-lockup')?.parentElement,
         document.querySelector('.reusable-search__result-container')?.parentElement,
-        
+
         // Additional LinkedIn selectors
         document.querySelector('.search-results-list'),
         document.querySelector('.search-results__list'),
@@ -156,84 +156,83 @@ class LinkedInSalesNavIntegration {
         document.querySelector('.entity-lockup__container'),
         document.querySelector('.search-results__container'),
         document.querySelector('.search-results__content'),
-        
+
         // Fallback containers
         document.querySelector('main'),
         document.querySelector('[role="main"]'),
         document.querySelector('.main-content'),
         document.querySelector('.content'),
         document.querySelector('.page-content'),
-        
+
         // LinkedIn specific fallbacks
         document.querySelector('.scaffold-layout'),
         document.querySelector('.scaffold-layout__main'),
         document.querySelector('.application-outlet'),
         document.querySelector('.global-nav'),
         document.querySelector('.global-nav')?.nextElementSibling,
-        
         // Ultimate fallback - body
         document.body
       ].filter(Boolean);
 
       console.log('[HP Extension] Found possible containers:', possibleContainers.length);
-      
+
       if (possibleContainers.length > 0) {
         console.log('[HP Extension] Creating integration UI with first available container');
-        this.createIntegrationUI(possibleContainers[0]);
+        this.createIntegrationUI(possibleContainers[0],true);
       } else {
         console.log('[HP Extension] No suitable container found, will retry with observer');
       }
     }
   }
 
-  createIntegrationUI(targetContainer = null) {
+  createIntegrationUI(targetContainer = null,float) {
     console.log('[HP Extension] Creating integration UI elements');
     const container = document.createElement('div');
     container.id = 'hp-integration-container';
     container.className = 'hp-integration-container';
-    
+
     const button = document.createElement('button');
     button.id = 'hp-integration-button';
     button.className = 'hp-integration-btn';
+    if(float){
+      button.style.float = 'left';
+    }
     button.innerHTML = `
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-      </svg>
-      Add to Highperformr
+      Add 
     `;
-    
+
     container.appendChild(button);
     console.log('[HP Extension] Integration button created');
-    
+
     // Try to find a good insertion point
     let insertionPoint = targetContainer;
-    
+
     if (!insertionPoint) {
       // Comprehensive list of possible insertion points
       insertionPoint = document.querySelector('[data-test-search-results]') ||
-                     document.querySelector('.search-results-container') ||
-                     document.querySelector('.search-results') ||
-                     document.querySelector('.scaffold-layout__content') ||
-                     document.querySelector('[data-sn-view-name="lead-search"]') ||
-                     document.querySelector('[data-sn-view-name="module-lead-search-results"]') ||
-                     document.querySelector('.search-results-list') ||
-                     document.querySelector('.search-results__list') ||
-                     document.querySelector('.entity-lockup')?.parentElement ||
-                     document.querySelector('.reusable-search__result-container')?.parentElement ||
-                     document.querySelector('.search-results__container') ||
-                     document.querySelector('.search-results__content') ||
-                     document.querySelector('main') ||
-                     document.querySelector('[role="main"]') ||
-                     document.querySelector('.main-content') ||
-                     document.querySelector('.content') ||
-                     document.querySelector('.page-content') ||
-                     document.querySelector('.scaffold-layout') ||
-                     document.querySelector('.scaffold-layout__main') ||
-                     document.querySelector('.application-outlet');
+        document.querySelector('.search-results-container') ||
+        document.querySelector('.search-results') ||
+        document.querySelector('.scaffold-layout__content') ||
+        document.querySelector('[data-sn-view-name="lead-search"]') ||
+        document.querySelector('[data-sn-view-name="module-lead-search-results"]') ||
+        document.querySelector('.search-results-list') ||
+        document.querySelector('.search-results__list') ||
+        document.querySelector('.entity-lockup')?.parentElement ||
+        document.querySelector('.reusable-search__result-container')?.parentElement ||
+        document.querySelector('.search-results__container') ||
+        document.querySelector('.search-results__content') ||
+        document.querySelector('main') ||
+        document.querySelector('[role="main"]') ||
+        document.querySelector('.main-content') ||
+        document.querySelector('.content') ||
+        document.querySelector('.page-content') ||
+        document.querySelector('.scaffold-layout') ||
+        document.querySelector('.scaffold-layout__main') ||
+        document.querySelector('.application-outlet');
     }
-    
+
     console.log('[HP Extension] Insertion point found:', !!insertionPoint);
-    
+
     if (insertionPoint) {
       // Try multiple insertion strategies
       try {
@@ -296,7 +295,7 @@ class LinkedInSalesNavIntegration {
       console.log('[HP Extension] Checking authentication...');
       const isAuth = await this.checkAuthentication();
       console.log('[HP Extension] Authentication result:', isAuth);
-      
+
       if (!isAuth) {
         console.log('[HP Extension] Not authenticated, showing auth modal');
         this.showAuthModal();
@@ -324,16 +323,16 @@ class LinkedInSalesNavIntegration {
         hasCookies: !!storedData.highperformrCookies,
         cookieAge: storedData.cookieCaptureTime ? (Date.now() - storedData.cookieCaptureTime) / 1000 / 60 : 'unknown'
       });
-      
+
       // Check if we have recent cookies (less than 1 hour old)
-      const hasRecentCookies = storedData.highperformrCookies && 
-                               storedData.cookieCaptureTime && 
-                               (Date.now() - storedData.cookieCaptureTime) < 3600000; // 1 hour
-      
+      const hasRecentCookies = storedData.highperformrCookies &&
+        storedData.cookieCaptureTime &&
+        (Date.now() - storedData.cookieCaptureTime) < 3600000; // 1 hour
+
       // If we have stored auth data AND recent cookies, try to verify the session
       if (storedData.isAuthenticated && storedData.userId && storedData.accountId && hasRecentCookies) {
         console.log('[HP Extension] Found stored auth data with recent cookies, verifying session...');
-        
+
         try {
           const sessionValid = await this.verifyStoredSession();
           if (sessionValid) {
@@ -350,19 +349,19 @@ class LinkedInSalesNavIntegration {
           await chrome.storage.local.remove(['isAuthenticated', 'userId', 'accountId']);
         }
       }
-      
+
       // Check if user is logged in on the platform by trying to access it via background script
       console.log('[HP Extension] Checking platform session via background script...');
       try {
         // Get cookies first to ensure we have them stored
         const cookies = await this.getHighperformrCookies();
         console.log('[HP Extension] Retrieved cookies for session check:', cookies.length);
-        
+
         if (!cookies) {
           console.log('[HP Extension] No cookies available, authentication required');
           return false;
         }
-        
+
         // Use background script to verify session (avoids CORS issues)
         const sessionResult = await new Promise((resolve) => {
           chrome.runtime.sendMessage({
@@ -372,7 +371,7 @@ class LinkedInSalesNavIntegration {
             resolve(response);
           });
         });
-        
+
         if (sessionResult && sessionResult.success && sessionResult.authenticated) {
           console.log('[HP Extension] Platform session verified via background script');
           return true;
@@ -384,7 +383,7 @@ class LinkedInSalesNavIntegration {
         // Platform not accessible or user not logged in
         console.log('[HP Extension] Platform session verification error:', error.message);
       }
-      
+
       console.log('[HP Extension] No authentication found');
       return false;
     } catch (error) {
@@ -405,7 +404,7 @@ class LinkedInSalesNavIntegration {
           resolve(response);
         });
       });
-      
+
       if (sessionResult && sessionResult.success && sessionResult.authenticated) {
         console.log('[HP Extension] Stored session verification successful');
         return true;
@@ -464,7 +463,7 @@ class LinkedInSalesNavIntegration {
       // Open authentication popup
       const authUrl = 'https://auth.highperformr.ai/auth/chrome-extension';
       console.log('[HP Extension] Opening auth popup to:', authUrl);
-      
+
       const authWindow = window.open(
         authUrl,
         'highperformr_auth',
@@ -480,7 +479,7 @@ class LinkedInSalesNavIntegration {
       console.log('[HP Extension] Auth popup opened, starting polling');
       let pollCount = 0;
       const maxPolls = 60; // 30 seconds max (500ms * 60)
-      
+
       // Poll for authentication completion with shorter interval
       const checkAuth = setInterval(async () => {
         pollCount++;
@@ -495,15 +494,15 @@ class LinkedInSalesNavIntegration {
           // Check current URL
           const url = authWindow.location.href;
           console.log('[HP Extension] Auth popup URL:', url);
-          
+
           // Check if redirected to success page
           if (url.includes('/auth/success')) {
             console.log('[HP Extension] Auth success detected');
             clearInterval(checkAuth);
-            
+
             // Wait for redirect to app.highperformr.ai and capture cookies from there
             await this.waitForAppRedirectAndCaptureCookies(authWindow);
-            
+
             authWindow.close();
             this.handleAuthSuccess();
           }
@@ -511,14 +510,14 @@ class LinkedInSalesNavIntegration {
           else if (url.includes('app.highperformr.ai') && !url.includes('/auth/') && !url.includes('chrome-extension')) {
             console.log('[HP Extension] Already logged in - detected app.highperformr.ai');
             clearInterval(checkAuth);
-            
+
             // Wait a moment for cookies to be set in app context, then capture
             console.log('[HP Extension] Waiting for cookies to be set in app.highperformr.ai context...');
             await new Promise(resolve => setTimeout(resolve, 2000));
-            
+
             // Capture cookies from app.highperformr.ai context
             await this.captureCookiesFromAppDomain();
-            
+
             authWindow.close();
             this.handleAlreadyLoggedIn();
           }
@@ -526,10 +525,10 @@ class LinkedInSalesNavIntegration {
           else if (url.includes('highperformr.ai') && !url.includes('/auth/') && !url.includes('chrome-extension')) {
             console.log('[HP Extension] Detected highperformr.ai domain, treating as logged in');
             clearInterval(checkAuth);
-            
+
             // Wait for redirect to app.highperformr.ai and capture cookies from there
             await this.waitForAppRedirectAndCaptureCookies(authWindow);
-            
+
             authWindow.close();
             this.handleAlreadyLoggedIn();
           }
@@ -537,14 +536,14 @@ class LinkedInSalesNavIntegration {
           else if (url.includes('app.highperformr.ai/') && url !== 'https://app.highperformr.ai/' && !url.includes('/auth/')) {
             console.log('[HP Extension] Detected main app page, treating as logged in');
             clearInterval(checkAuth);
-            
+
             // Wait a moment for cookies to be set in app context, then capture
             console.log('[HP Extension] Waiting for cookies to be set in app.highperformr.ai context...');
             await new Promise(resolve => setTimeout(resolve, 2000));
-            
+
             // Capture cookies from app.highperformr.ai context
             await this.captureCookiesFromAppDomain();
-            
+
             authWindow.close();
             this.handleAlreadyLoggedIn();
           }
@@ -559,25 +558,25 @@ class LinkedInSalesNavIntegration {
             if (pollCount > 10) {
               console.log('[HP Extension] Multiple cross-origin errors, assuming logged in');
               clearInterval(checkAuth);
-              
+
               // Wait for cookies to be set in app.highperformr.ai context
               console.log('[HP Extension] Waiting 3 seconds for cookies to be set in app.highperformr.ai...');
               await new Promise(resolve => setTimeout(resolve, 3000));
-              
+
               // Capture cookies from app.highperformr.ai context specifically
               await this.captureCookiesFromAppDomain();
-              
+
               authWindow.close();
-              
+
               // Wait another second after closing the window before verifying
               await new Promise(resolve => setTimeout(resolve, 1000));
-              
+
               this.handleAlreadyLoggedIn();
               return;
             }
           }
         }
-        
+
         // Timeout after max polls
         if (pollCount >= maxPolls) {
           console.log('[HP Extension] Auth polling timeout, closing popup');
@@ -595,20 +594,20 @@ class LinkedInSalesNavIntegration {
 
   async waitForAppRedirectAndCaptureCookies(authWindow) {
     console.log('[HP Extension] Waiting for redirect to app.highperformr.ai...');
-    
+
     try {
       // Wait for potential redirect to app.highperformr.ai
       let redirectWaitCount = 0;
       const maxRedirectWait = 10; // Wait up to 5 seconds for redirect
-      
+
       while (redirectWaitCount < maxRedirectWait) {
         await new Promise(resolve => setTimeout(resolve, 500));
         redirectWaitCount++;
-        
+
         try {
           const currentUrl = authWindow.location.href;
           console.log('[HP Extension] Checking for app redirect, current URL:', currentUrl);
-          
+
           if (currentUrl.includes('app.highperformr.ai')) {
             console.log('[HP Extension] Redirected to app.highperformr.ai, waiting for cookies to be set...');
             await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for cookies to be set
@@ -619,10 +618,10 @@ class LinkedInSalesNavIntegration {
           console.log('[HP Extension] Cross-origin error while waiting for redirect (expected)');
         }
       }
-      
+
       // Now capture cookies from app.highperformr.ai context
       await this.captureCookiesFromAppDomain();
-      
+
     } catch (error) {
       console.error('[HP Extension] Error waiting for app redirect:', error);
       // Fallback to regular cookie capture
@@ -632,24 +631,24 @@ class LinkedInSalesNavIntegration {
 
   async captureCookiesFromAppDomain() {
     console.log('[HP Extension] Capturing cookies specifically from app.highperformr.ai context');
-    
+
     try {
       // Try capturing cookies multiple times with delays to ensure they're fully set
       let attempts = 0;
       const maxAttempts = 5;
       let bestResponse = null;
-      
+
       while (attempts < maxAttempts) {
         attempts++;
         console.log(`[HP Extension] App domain cookie capture attempt ${attempts}/${maxAttempts}`);
-        
+
         // Wait between attempts
         if (attempts > 1) {
           const waitTime = attempts > 3 ? 2000 : 1500;
           console.log(`[HP Extension] Waiting ${waitTime}ms before app domain attempt ${attempts}`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
-        
+
         const response = await new Promise((resolve) => {
           chrome.runtime.sendMessage({
             type: 'CAPTURE_COOKIES_FROM_DOMAIN',
@@ -662,7 +661,7 @@ class LinkedInSalesNavIntegration {
 
         if (response && response.success) {
           bestResponse = response;
-          
+
           // Check if we have the session cookie
           if (response.cookies && response.cookies.includes('session=')) {
             console.log('[HP Extension] Found session cookie from app.highperformr.ai, using this response');
@@ -677,21 +676,21 @@ class LinkedInSalesNavIntegration {
       if (bestResponse && bestResponse.success) {
         console.log('[HP Extension] Successfully captured cookies from app.highperformr.ai domain');
         console.log('[HP Extension] Final app domain cookies:', bestResponse.cookies);
-        
+
         // Store the captured cookies in local storage
         await chrome.storage.local.set({
           highperformrCookies: bestResponse.cookies,
           cookieCaptureTime: Date.now()
         });
-        
+
         console.log('[HP Extension] App domain cookies stored in local storage');
       } else {
         console.log('[HP Extension] Failed to capture cookies from app.highperformr.ai domain after all attempts');
-        
+
         // Fallback: try to capture from broader domain and active tab
         console.log('[HP Extension] Falling back to broader domain cookie capture...');
         await this.captureCookiesFromWindow();
-        
+
         // Also try capturing from active tab if user has app.highperformr.ai open
         console.log('[HP Extension] Also trying to capture from active tab...');
         await this.captureCookiesFromActiveTab();
@@ -705,7 +704,7 @@ class LinkedInSalesNavIntegration {
 
   async captureCookiesFromWindow() {
     console.log('[HP Extension] Attempting to capture cookies from broader domain');
-    
+
     try {
       const response = await new Promise((resolve) => {
         chrome.runtime.sendMessage({
@@ -720,13 +719,13 @@ class LinkedInSalesNavIntegration {
       if (response && response.success) {
         console.log('[HP Extension] Successfully captured cookies from broader Highperformr domain');
         console.log('[HP Extension] Broader domain cookies:', response.cookies);
-        
+
         // Store the captured cookies in local storage
         await chrome.storage.local.set({
           highperformrCookies: response.cookies,
           cookieCaptureTime: Date.now()
         });
-        
+
         console.log('[HP Extension] Broader domain cookies stored in local storage');
       } else {
         console.log('[HP Extension] Failed to capture cookies from broader Highperformr domain');
@@ -738,7 +737,7 @@ class LinkedInSalesNavIntegration {
 
   async captureCookiesFromActiveTab() {
     console.log('[HP Extension] Attempting to capture cookies from active tab');
-    
+
     try {
       const response = await new Promise((resolve) => {
         chrome.runtime.sendMessage({
@@ -753,17 +752,17 @@ class LinkedInSalesNavIntegration {
         console.log('[HP Extension] Successfully captured cookies from active tab');
         console.log('[HP Extension] Active tab cookies:', response.cookies);
         console.log('[HP Extension] Active tab URL:', response.tabUrl);
-        
+
         // Check if we got the session cookie from active tab
         if (response.cookies && response.cookies.includes('session=')) {
           console.log('[HP Extension] 🎯 FOUND SESSION COOKIE FROM ACTIVE TAB!');
-          
+
           // Store the captured cookies in local storage
           await chrome.storage.local.set({
             highperformrCookies: response.cookies,
             cookieCaptureTime: Date.now()
           });
-          
+
           console.log('[HP Extension] Active tab cookies with session stored in local storage');
         } else {
           console.log('[HP Extension] Active tab cookies do not contain session cookie');
@@ -782,7 +781,7 @@ class LinkedInSalesNavIntegration {
       // Get cookies first
       const cookies = await this.getHighperformrCookies();
       console.log('[HP Extension] Retrieved cookies for auth success:', cookies.length);
-      
+
       // Verify authentication with backend using background script
       const sessionResult = await new Promise((resolve) => {
         chrome.runtime.sendMessage({
@@ -795,10 +794,10 @@ class LinkedInSalesNavIntegration {
 
       if (sessionResult && sessionResult.success && sessionResult.authenticated) {
         console.log('[HP Extension] Auth success verification successful');
-        
+
         if (sessionResult.userData) {
           console.log('[HP Extension] Auth success user data:', sessionResult.userData);
-          
+
           await chrome.storage.local.set({
             isAuthenticated: true,
             userId: sessionResult.userData.data?.id || sessionResult.userData.id,
@@ -819,7 +818,7 @@ class LinkedInSalesNavIntegration {
           } catch (error) {
             console.error('[HP Extension] Failed to fetch workspaces for accountId:', error);
           }
-          
+
           await chrome.storage.local.set({
             isAuthenticated: true,
             userId: 'unknown',
@@ -827,7 +826,7 @@ class LinkedInSalesNavIntegration {
             highperformrCookies: cookies
           });
         }
-        
+
         this.showSuccess('Authentication successful!');
         // Show workspace modal after successful auth
         setTimeout(() => {
@@ -849,7 +848,7 @@ class LinkedInSalesNavIntegration {
       const cookies = await this.getHighperformrCookies();
       console.log('[HP Extension] Retrieved Highperformr cookies:', cookies.length);
       console.log('[HP Extension] Cookies text:', cookies);
-      
+
       // Verify authentication with backend using background script
       const sessionResult = await new Promise((resolve) => {
         chrome.runtime.sendMessage({
@@ -862,10 +861,10 @@ class LinkedInSalesNavIntegration {
 
       if (sessionResult && sessionResult.success && sessionResult.authenticated) {
         console.log('[HP Extension] Already logged in verification successful');
-        
+
         if (sessionResult.userData) {
           console.log('[HP Extension] User data retrieved:', sessionResult.userData);
-          
+
           await chrome.storage.local.set({
             isAuthenticated: true,
             userId: sessionResult.userData.data?.id || sessionResult.userData.id,
@@ -886,7 +885,7 @@ class LinkedInSalesNavIntegration {
           } catch (error) {
             console.error('[HP Extension] Failed to fetch workspaces for accountId:', error);
           }
-          
+
           await chrome.storage.local.set({
             isAuthenticated: true,
             userId: 'unknown',
@@ -894,7 +893,7 @@ class LinkedInSalesNavIntegration {
             highperformrCookies: cookies
           });
         }
-        
+
         this.showSuccess('Already logged in! Using existing session.');
         // Show workspace modal after successful auth
         setTimeout(() => {
@@ -930,12 +929,12 @@ class LinkedInSalesNavIntegration {
         const cookies = await chrome.cookies.getAll({
           domain: '.highperformr.ai'
         });
-        
+
         console.log('[HP Extension] Found cookies:', cookies.length);
         const cookieString = cookies
           .map(cookie => `${cookie.name}=${cookie.value}`)
           .join('; ');
-        
+
         console.log('[HP Extension] Cookie string length:', cookieString.length);
         return cookieString;
       } else {
@@ -1024,9 +1023,9 @@ class LinkedInSalesNavIntegration {
     try {
       const userData = await chrome.storage.local.get(['workspaces', 'accountId']);
       console.log('[HP Extension] Retrieved user data for workspace modal:', userData);
-      
+
       let workspaces = [];
-      
+
       // First try to get workspaces from stored session data
       if (userData.workspaces && Array.isArray(userData.workspaces)) {
         console.log('[HP Extension] Using workspaces from session data:', userData.workspaces.length);
@@ -1052,7 +1051,7 @@ class LinkedInSalesNavIntegration {
             resolve(response);
           });
         });
-        
+
         if (limitResponse && limitResponse.success) {
           contactLimitInfo = limitResponse;
         }
@@ -1076,7 +1075,7 @@ class LinkedInSalesNavIntegration {
       const remaining = contactLimitInfo.remaining || (1500 - contactLimitInfo.currentTotal);
       const isNearLimit = remaining < 100;
       const limitColor = isNearLimit ? '#e74c3c' : '#27ae60';
-      
+
       contactLimitSection = `
         <div class="hp-form-group" style="margin-bottom: 20px;">
           <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; border-left: 4px solid ${limitColor};">
@@ -1121,7 +1120,7 @@ class LinkedInSalesNavIntegration {
               <div class="hp-dropdown-content" id="hp-workspace-content">
                 <input type="text" id="hp-workspace-search" placeholder="Search workspaces..." />
                 <div class="hp-dropdown-list" id="hp-workspace-list">
-                  ${workspaces.map(ws => 
+                  ${workspaces.map(ws =>
     `<div class="hp-dropdown-item" data-value="${ws.id}">${ws.name}</div>`
   ).join('')}
                 </div>
@@ -1166,13 +1165,13 @@ class LinkedInSalesNavIntegration {
     const workspaceSearch = modal.querySelector('#hp-workspace-search');
     const workspaceList = modal.querySelector('#hp-workspace-list');
     const workspaceText = workspaceTrigger.querySelector('.hp-dropdown-text');
-    
+
     const segmentDropdown = modal.querySelector('#hp-segment-dropdown');
     const segmentTrigger = modal.querySelector('#hp-segment-trigger');
     const segmentSearch = modal.querySelector('#hp-segment-search');
     const segmentList = modal.querySelector('#hp-segment-list');
     const segmentText = segmentTrigger.querySelector('.hp-dropdown-text');
-    
+
     const importButton = modal.querySelector('#hp-import');
 
     let selectedWorkspaceId = '';
@@ -1185,10 +1184,10 @@ class LinkedInSalesNavIntegration {
       if (workspaceTrigger.hasAttribute('disabled')) {
         return;
       }
-      
+
       // Close other dropdowns
       segmentDropdown.classList.remove('hp-dropdown-open');
-      
+
       // Toggle workspace dropdown
       workspaceDropdown.classList.toggle('hp-dropdown-open');
       if (workspaceDropdown.classList.contains('hp-dropdown-open')) {
@@ -1199,11 +1198,11 @@ class LinkedInSalesNavIntegration {
     // Workspace search functionality
     workspaceSearch.addEventListener('input', (e) => {
       const searchTerm = e.target.value.toLowerCase();
-      const filteredWorkspaces = workspaces.filter(ws => 
+      const filteredWorkspaces = workspaces.filter(ws =>
         ws.name.toLowerCase().includes(searchTerm)
       );
-      
-      workspaceList.innerHTML = filteredWorkspaces.map(ws => 
+
+      workspaceList.innerHTML = filteredWorkspaces.map(ws =>
         `<div class="hp-dropdown-item" data-value="${ws.id}">${ws.name}</div>`
       ).join('');
     });
@@ -1213,28 +1212,28 @@ class LinkedInSalesNavIntegration {
       if (e.target.classList.contains('hp-dropdown-item')) {
         const workspaceId = e.target.getAttribute('data-value');
         const workspaceName = e.target.textContent;
-        
+
         selectedWorkspaceId = workspaceId;
         workspaceText.textContent = workspaceName;
         workspaceDropdown.classList.remove('hp-dropdown-open');
         workspaceSearch.value = '';
-        
+
         console.log('[HP Extension] Workspace selected:', workspaceId);
-        
+
         // Reset segment selection
         selectedSegmentId = '';
         segmentText.textContent = 'Loading segments...';
         segmentTrigger.setAttribute('disabled', 'true');
         segmentSearch.disabled = true;
         importButton.disabled = true;
-        
+
         try {
           const segments = await this.fetchSegmentsFromBackground(workspaceId);
           console.log('[HP Extension] Fetched segments for workspace:', segments.length);
           currentSegments = segments;
-          
+
           if (segments.length > 0) {
-            segmentList.innerHTML = segments.map(seg => 
+            segmentList.innerHTML = segments.map(seg =>
               `<div class="hp-dropdown-item" data-value="${seg.id}">${seg.name}</div>`
             ).join('');
             segmentText.textContent = 'Select a segment...';
@@ -1261,10 +1260,10 @@ class LinkedInSalesNavIntegration {
       if (segmentTrigger.hasAttribute('disabled')) {
         return;
       }
-      
+
       // Close other dropdowns
       workspaceDropdown.classList.remove('hp-dropdown-open');
-      
+
       // Toggle segment dropdown
       segmentDropdown.classList.toggle('hp-dropdown-open');
       if (segmentDropdown.classList.contains('hp-dropdown-open')) {
@@ -1275,11 +1274,11 @@ class LinkedInSalesNavIntegration {
     // Segment search functionality
     segmentSearch.addEventListener('input', (e) => {
       const searchTerm = e.target.value.toLowerCase();
-      const filteredSegments = currentSegments.filter(seg => 
+      const filteredSegments = currentSegments.filter(seg =>
         seg.name.toLowerCase().includes(searchTerm)
       );
-      
-      segmentList.innerHTML = filteredSegments.map(seg => 
+
+      segmentList.innerHTML = filteredSegments.map(seg =>
         `<div class="hp-dropdown-item" data-value="${seg.id}">${seg.name}</div>`
       ).join('');
     });
@@ -1289,15 +1288,15 @@ class LinkedInSalesNavIntegration {
       if (e.target.classList.contains('hp-dropdown-item')) {
         const segmentId = e.target.getAttribute('data-value');
         const segmentName = e.target.textContent;
-        
+
         if (segmentId) {
           selectedSegmentId = segmentId;
           segmentText.textContent = segmentName;
           segmentDropdown.classList.remove('hp-dropdown-open');
           segmentSearch.value = '';
-          
+
           console.log('[HP Extension] Segment selected:', segmentId);
-          
+
           // Enable import button
           importButton.disabled = false;
         }
@@ -1331,10 +1330,10 @@ class LinkedInSalesNavIntegration {
     try {
       const urlInfo = this.isAllowedUrl();
       const currentUrl = window.location.href;
-      
+
       // Show progress modal
       this.showProgressModal();
-      
+
       // Send message to background script
       chrome.runtime.sendMessage({
         type: 'START_SALES_NAV_IMPORT',
@@ -1383,7 +1382,7 @@ class LinkedInSalesNavIntegration {
 
   handleProgressUpdate(message) {
     const modal = document.getElementById('hp-progress-modal');
-    if (!modal) {return;}
+    if (!modal) { return; }
 
     const progressFill = modal.querySelector('.hp-progress-fill');
     const progressText = modal.querySelector('.hp-progress-text');
@@ -1528,11 +1527,15 @@ setTimeout(() => {
   }
 }, 3000);
 
-// Initialize when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
+// Initialize when DOM is ready (content scripts often run after DOMContentLoaded has already fired)
+function initIntegration() {
+  setTimeout(() => {
     new LinkedInSalesNavIntegration();
-  });
-} else {
-  new LinkedInSalesNavIntegration();
+  }, 1000);
 }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initIntegration);
+} else {
+  initIntegration();
+}
+
